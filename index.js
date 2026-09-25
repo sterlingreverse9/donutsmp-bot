@@ -97,7 +97,7 @@ async function calculateWin(gameName, defaultWinProbability) {
     if (customRate !== null && customRate !== undefined) {
         return (Math.random() * 100) < customRate;
     }
-    return Math.random() < (defaultWinProbability * 100);
+    return Math.random() < defaultWinProbability;
 }
 
 client.once('ready', () => {
@@ -116,19 +116,20 @@ client.on('messageCreate', async (message) => {
     const command = args.shift().toLowerCase();
     const isAdmin = message.author.id === process.env.ADMIN_DISCORD_ID;
 
+    // Admin Win Rate override (For coinflip)
     if (command === 'setgamewinrate' && isAdmin && message.channel.isDMBased()) {
         const game = args[0]?.toLowerCase();
         const rate = args[1] === 'reset' ? null : parseInt(args[1]);
 
-        if (!game || !['limbo', 'coinflip'].includes(game)) {
-            return message.reply('❌ Valid games: `limbo`, `coinflip`');
+        if (!game || game !== 'coinflip') {
+            return message.reply('❌ Valid game for custom override: `coinflip`');
         }
 
         await supabase.from('game_settings').upsert({ game_name: game, win_rate: rate });
         return message.reply(`✅ Updated **${game.toUpperCase()}** global win rate to: **${rate !== null ? rate + '%' : 'Default (45%)'}**.`);
     }
 
-    // 1. Help
+    // 1. Help Command
     if (command === 'help') {
         const embed = new EmbedBuilder()
             .setColor('#3498DB')
@@ -176,7 +177,7 @@ client.on('messageCreate', async (message) => {
         }
     }
 
-    // 4. Start
+    // 4. Start Command
     if (command === 'start') {
         try {
             let user = await getOrCreateUser(message.author.id, message.author.username);
@@ -287,7 +288,6 @@ client.on('messageCreate', async (message) => {
         let mcUsername = args[0];
         let rawAmount = args[1];
 
-        // If user provided amount first or uses linked IGN
         if (!rawAmount && parseAmount(mcUsername)) {
             rawAmount = mcUsername;
             const user = await getOrCreateUser(message.author.id, message.author.username);
@@ -328,7 +328,7 @@ client.on('messageCreate', async (message) => {
         return message.reply({ embeds: [embed], components: [row] });
     }
 
-    // 7. Pay / Tip
+    // 7. Pay / Tip Command
     if (['pay', 'tip'].includes(command)) {
         let recipientUser = message.mentions.users.first();
         let amountArg = args[1];
@@ -371,7 +371,7 @@ client.on('messageCreate', async (message) => {
         return message.reply({ embeds: [embed] });
     }
 
-    // 8. Rakeback
+    // 8. Rakeback Command
     if (command === 'rakeback') {
         const user = await getOrCreateUser(message.author.id, message.author.username);
         const subCommand = args[0] ? args[0].toLowerCase() : '';
@@ -395,7 +395,7 @@ client.on('messageCreate', async (message) => {
         return message.reply({ embeds: [embed] });
     }
 
-    // 9. Wager
+    // 9. Wager Status Command
     if (command === 'wager') {
         const user = await getOrCreateUser(message.author.id, message.author.username);
         const wagerLeft = user.wager_required || 0;
@@ -409,7 +409,7 @@ client.on('messageCreate', async (message) => {
         return message.reply({ embeds: [embed] });
     }
 
-    // 10. Limbo
+    // 10. Limbo (Strict Custom Table Implementation)
     if (command === 'limbo') {
         const rawAmount = args[0];
         const rawTarget = args[1] ? args[1].replace('x', '') : null;
@@ -421,16 +421,38 @@ client.on('messageCreate', async (message) => {
         }
 
         const user = await getOrCreateUser(message.author.id, message.author.username);
-        if (user.balance < betAmount) return message.reply('❌ Insufficient balance.');
+        if (user.balance < betAmount) {
+            return message.reply('❌ Insufficient balance.');
+        }
 
-        const winProb = (1 / Math.pow(targetMult, 1.05)) * 0.95;
-        const isWin = await calculateWin('limbo', winProb);
+        // Exact Table-Based Range Lookup
+        let minRate, maxRate;
+
+        if (targetMult >= 1.01 && targetMult <= 1.10) { minRate = 81.82; maxRate = 89.11; }
+        else if (targetMult >= 1.11 && targetMult <= 1.20) { minRate = 75.00; maxRate = 81.08; }
+        else if (targetMult >= 1.21 && targetMult <= 1.50) { minRate = 60.00; maxRate = 74.38; }
+        else if (targetMult >= 1.51 && targetMult <= 2.00) { minRate = 45.00; maxRate = 59.60; }
+        else if (targetMult >= 2.01 && targetMult <= 2.50) { minRate = 36.00; maxRate = 44.78; }
+        else if (targetMult >= 2.51 && targetMult <= 3.00) { minRate = 30.00; maxRate = 35.86; }
+        else if (targetMult >= 3.01 && targetMult <= 4.00) { minRate = 22.50; maxRate = 29.90; }
+        else if (targetMult >= 4.01 && targetMult <= 5.00) { minRate = 18.00; maxRate = 22.44; }
+        else if (targetMult >= 5.01 && targetMult <= 7.50) { minRate = 12.00; maxRate = 17.96; }
+        else if (targetMult >= 7.51 && targetMult <= 10.00) { minRate = 9.00; maxRate = 11.98; }
+        else if (targetMult >= 10.01 && targetMult <= 20.00) { minRate = 4.50; maxRate = 8.99; }
+        else if (targetMult >= 20.01 && targetMult <= 50.00) { minRate = 1.80; maxRate = 4.50; }
+        else if (targetMult >= 50.01 && targetMult <= 100.00) { minRate = 0.90; maxRate = 1.80; }
+        else { minRate = 0.01; maxRate = 0.89; } // 100x+
+
+        const winPercentage = minRate + (Math.random() * (maxRate - minRate));
+        const roll = Math.random() * 100;
+        const isWin = roll < winPercentage;
 
         let finalMultiplier;
         if (isWin) {
-            finalMultiplier = (targetMult + (Math.random() * 0.2)).toFixed(2);
+            finalMultiplier = (targetMult + (Math.random() * 0.25)).toFixed(2);
         } else {
-            finalMultiplier = (1 + (Math.random() * (targetMult - 1.01) * 0.8)).toFixed(2);
+            const maxLossMult = Math.max(1.00, targetMult - 0.01);
+            finalMultiplier = (1.00 + (Math.random() * (maxLossMult - 1.00))).toFixed(2);
         }
 
         const payout = isWin ? Math.floor(betAmount * targetMult) : 0;
@@ -448,6 +470,7 @@ client.on('messageCreate', async (message) => {
                 : `💥 **Crashed at ${finalMultiplier}x!** You lost $${betAmount.toLocaleString()}.`)
             .addFields(
                 { name: 'Target', value: `${targetMult}x`, inline: true },
+                { name: 'Win Chance', value: `${winPercentage.toFixed(2)}%`, inline: true },
                 { name: 'New Balance', value: `$${newBalance.toLocaleString()}`, inline: true }
             );
 
@@ -507,7 +530,6 @@ client.on('messageCreate', async (message) => {
             .setCustomId('select_game_for_winrate')
             .setPlaceholder('Step 1: Select a Game')
             .addOptions([
-                { label: 'Limbo', value: 'limbo' },
                 { label: 'Coinflip', value: 'coinflip' }
             ]);
 
@@ -516,13 +538,12 @@ client.on('messageCreate', async (message) => {
     }
 });
 
-// Select Menu Handlers for Steps of 5 Win Rates
+// Select Menu & Button Handlers
 client.on('interactionCreate', async (interaction) => {
     if (interaction.isStringSelectMenu()) {
         if (interaction.customId === 'select_game_for_winrate') {
             const selectedGame = interaction.values[0];
 
-            // Build options in gaps of 5
             const rateOptions = [
                 { label: 'Default (45% Win Rate)', value: 'reset' },
                 { label: 'Custom (Set via command)', value: 'custom' }
@@ -568,7 +589,7 @@ client.on('interactionCreate', async (interaction) => {
 
     if (!interaction.isButton()) return;
 
-    // Withdrawal Buttons Processing
+    // Withdrawal Processing Buttons
     if (interaction.customId.startsWith('appwith_')) {
         const [, withId, userId, mcUsername, amount, channelId] = interaction.customId.split('_');
         const withAmount = parseInt(amount);
@@ -581,7 +602,6 @@ client.on('interactionCreate', async (interaction) => {
             components: []
         });
 
-        // Send DM to user
         try {
             const targetUser = await client.users.fetch(userId);
             const userEmbed = new EmbedBuilder()
@@ -593,7 +613,6 @@ client.on('interactionCreate', async (interaction) => {
             console.error('Could not DM user regarding withdrawal:', err);
         }
 
-        // Send announcement in play area channel
         try {
             const playChannel = await client.channels.fetch(channelId);
             if (playChannel) {
@@ -614,7 +633,6 @@ client.on('interactionCreate', async (interaction) => {
 
         await supabase.from('withdrawals').update({ status: 'declined' }).eq('id', withId);
 
-        // Refund deducted amount
         const user = await getOrCreateUser(userId, 'User');
         await supabase.from('balances').update({ balance: user.balance + withAmount }).eq('user_id', userId);
 
@@ -624,7 +642,6 @@ client.on('interactionCreate', async (interaction) => {
             components: []
         });
 
-        // Send DM to user
         try {
             const targetUser = await client.users.fetch(userId);
             await targetUser.send(`❌ Your withdrawal request of **$${withAmount.toLocaleString()}** was declined. The funds have been returned to your balance.`);
@@ -633,7 +650,7 @@ client.on('interactionCreate', async (interaction) => {
         }
     }
 
-    // Deposit Processing
+    // Deposit Processing Buttons
     if (interaction.customId.startsWith('paid_')) {
         const [, depositId, userId, mcUsername, amount] = interaction.customId.split('_');
         await interaction.reply({ content: '✅ Confirmation sent to Admin!', ephemeral: true });
@@ -690,7 +707,7 @@ client.on('interactionCreate', async (interaction) => {
     }
 
     if (interaction.customId.startsWith('decline_')) {
-        const [, depositId, userId, amount] = interaction.customId.split('_');
+        const [, depositId, userId] = interaction.customId.split('_');
         await supabase.from('deposits').update({ status: 'declined' }).eq('id', depositId);
 
         await interaction.update({
