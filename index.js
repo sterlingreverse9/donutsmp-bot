@@ -558,12 +558,14 @@ client.on('messageCreate', async (message) => {
 
         let finalMultiplier;
         if (isWin) {
-            // Wins land anywhere between the target multiplier and target + extra boost
-            finalMultiplier = (targetMult + (Math.random() * (targetMult * 0.25))).toFixed(2);
+            // Wins land slightly above or equal to target
+            finalMultiplier = (targetMult + (Math.random() * 0.15)).toFixed(2);
         } else {
-            // Realistic loss crashing multiplier (between 1.00x and just below targetMult)
-            const crashRange = Math.max(0.01, targetMult * 0.98 - 1.00);
-            finalMultiplier = (1.00 + (Math.random() * crashRange)).toFixed(2);
+            // Realistic casino crash distribution: power curve capped just below targetMult
+            // Most crashes happen between 1.00x and 3.00x
+            const rawCrash = 1.00 + (1 / (Math.random() * 0.9 + 0.1) - 1);
+            const cappedCrash = Math.min(rawCrash, targetMult - 0.01);
+            finalMultiplier = Math.max(1.00, cappedCrash).toFixed(2);
         }
 
         const payout = isWin ? Math.floor(betAmount * targetMult) : 0;
