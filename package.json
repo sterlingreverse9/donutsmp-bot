@@ -1,49 +1,13 @@
-const { createClient } = require('@supabase/supabase-js');
-
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_KEY;
-
-if (!supabaseUrl || !supabaseKey) {
-  console.error('❌ CRITICAL ERROR: SUPABASE_URL or SUPABASE_KEY environment variable is missing in Render!');
-  process.exit(1);
-}
-
-const supabase = createClient(supabaseUrl, supabaseKey);
-
-module.exports = {
-  getOrCreateBalance: async (userId, username = 'Unknown') => {
-    const { data, error } = await supabase
-      .from('balances')
-      .select('balance, mc_username')
-      .eq('user_id', userId)
-      .single();
-
-    if (data) return { balance: parseInt(data.balance), mcUsername: data.mc_username };
-
-    const { data: newData } = await supabase
-      .from('balances')
-      .insert({ user_id: userId, username: username })
-      .select('balance, mc_username')
-      .single();
-
-    return { balance: parseInt(newData.balance), mcUsername: newData.mc_username };
+{
+  "name": "donutsmp-bot",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
   },
-
-  linkMcUsername: async (userId, mcUsername) => {
-    await supabase
-      .from('balances')
-      .update({ mc_username: mcUsername })
-      .eq('user_id', userId);
-  },
-
-  updateBalance: async (userId, newAmount) => {
-    const { data } = await supabase
-      .from('balances')
-      .update({ balance: newAmount })
-      .eq('user_id', userId)
-      .select('balance')
-      .single();
-
-    return parseInt(data.balance);
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.1",
+    "discord.js": "^14.15.3",
+    "express": "^4.19.2"
   }
-};
+}
