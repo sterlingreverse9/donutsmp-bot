@@ -62,8 +62,7 @@ async function handleGameCommands(command, args, message, prefix) {
             return true;
         }
 
-        // Generate Limbo Roll
-        const houseEdge = 0.05; // 5% house edge
+        const houseEdge = 0.05;
         const resultMultiplier = Math.max(1.0, parseFloat(((100 - houseEdge) / (Math.random() * 99 + 1)).toFixed(2)));
         const isWin = resultMultiplier >= targetMultiplier;
 
@@ -90,4 +89,5 @@ async function handleGameCommands(command, args, message, prefix) {
     return false;
 }
 
+// MUST MATCH THE DESTRUCTURED IMPORT IN index.js
 module.exports = { handleGameCommands };
