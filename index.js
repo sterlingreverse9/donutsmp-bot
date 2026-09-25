@@ -210,7 +210,7 @@ client.on('messageCreate', async (message) => {
             .addFields(
                 { name: '💰 Account', value: '`/start [ref_id]` - Claim starter bonus\n`/bal` - Check balance\n`/ref` or `/refer` - Referral dashboard & claim\n`/link <MC_IGN>` - Link MC username\n`/unlink` - Remove linked IGN\n`/wager` - Check wager requirement\n`/rakeback [claim]` - Rakeback menu\n`/pay` or `/tip` - Tip user' },
                 { name: '📥 Banking', value: '`/depo [IGN] <Amount>` - Deposit request\n`/withdraw <Amount> [IGN]` - Withdrawal request' },
-                { name: '🎲 Games', value: '`/limbo <Amount> <Multiplier>` - Limbo game\n`/cf <Amount> <heads/tails>` - Coinflip game' }
+                { name: '🎲 Games', value: '`/limbo <Amount> <Multiplier>` - Limbo game (Max 100x)\n`/cf <Amount> <heads/tails>` - Coinflip game' }
             );
 
         return message.reply({ embeds: [embed] });
@@ -526,8 +526,9 @@ client.on('messageCreate', async (message) => {
         const betAmount = parseAmount(rawAmount);
         const targetMult = parseFloat(rawTarget);
 
-        if (!betAmount || !targetMult || targetMult < 1.01) {
-            return message.reply(`❌ **Usage:** \`${prefix}limbo <amount> <multiplier>\` (e.g. \`${prefix}limbo 100k 2.0x\`)`);
+        // Cap multiplier between 1.01x and 100x
+        if (!betAmount || !targetMult || targetMult < 1.01 || targetMult > 100) {
+            return message.reply(`❌ **Usage:** \`${prefix}limbo <amount> <multiplier>\` (Multiplier must be between 1.01x and 100x)`);
         }
 
         const user = await getOrCreateUser(message.author.id, message.author.username);
@@ -546,8 +547,7 @@ client.on('messageCreate', async (message) => {
         else if (targetMult >= 7.51 && targetMult <= 10.00) { minRate = 9.00; maxRate = 11.98; }
         else if (targetMult >= 10.01 && targetMult <= 20.00) { minRate = 4.50; maxRate = 8.99; }
         else if (targetMult >= 20.01 && targetMult <= 50.00) { minRate = 1.80; maxRate = 4.50; }
-        else if (targetMult >= 50.01 && targetMult <= 100.00) { minRate = 0.90; maxRate = 1.80; }
-        else { minRate = 0.01; maxRate = 0.89; }
+        else { minRate = 0.90; maxRate = 1.80; }
 
         let baseWinPercentage = minRate + (Math.random() * (maxRate - minRate));
 
@@ -558,10 +558,12 @@ client.on('messageCreate', async (message) => {
 
         let finalMultiplier;
         if (isWin) {
-            finalMultiplier = (targetMult + (Math.random() * 0.25)).toFixed(2);
+            // Wins land anywhere between the target multiplier and target + extra boost
+            finalMultiplier = (targetMult + (Math.random() * (targetMult * 0.25))).toFixed(2);
         } else {
-            const maxLossMult = Math.max(1.00, targetMult - 0.01);
-            finalMultiplier = (1.00 + (Math.random() * (maxLossMult - 1.00))).toFixed(2);
+            // Realistic loss crashing multiplier (between 1.00x and just below targetMult)
+            const crashRange = Math.max(0.01, targetMult * 0.98 - 1.00);
+            finalMultiplier = (1.00 + (Math.random() * crashRange)).toFixed(2);
         }
 
         const payout = isWin ? Math.floor(betAmount * targetMult) : 0;
