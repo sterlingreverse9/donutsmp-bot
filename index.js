@@ -85,24 +85,21 @@ async function getOrCreateUser(userId, username) {
 async function evaluateMartingaleAndGetWinRate(user, betAmount, baseWinRate) {
     let streak = user.martingale_streak || 0;
     const lastAmount = user.last_bet_amount || 0;
-    const lastWon = user.last_bet_won !== false; // Default true if null
+    const lastWon = user.last_bet_won !== false;
 
-    // Check if player doubled (or roughly doubled) bet after a loss
     if (!lastWon && lastAmount > 0 && betAmount >= Math.floor(lastAmount * 1.8)) {
         streak += 1;
     } else {
-        streak = 0; // Reset streak if they won or didn't double
+        streak = 0;
     }
 
-    // Save updated streak counter
     await supabase.from('balances').update({ martingale_streak: streak }).eq('user_id', user.user_id);
 
-    // Apply subtle penalty factor based on Martingale streak
     let penaltyFactor = 1.0;
     if (streak === 2) {
-        penaltyFactor = 0.65; // 35% reduction in win rate
+        penaltyFactor = 0.65;
     } else if (streak >= 3) {
-        penaltyFactor = 0.35; // 65% reduction in win rate
+        penaltyFactor = 0.35;
     }
 
     return baseWinRate * penaltyFactor;
@@ -153,38 +150,66 @@ client.on('messageCreate', async (message) => {
 
         const embed = new EmbedBuilder()
             .setColor('#9B59B6')
-            .setTitle('⚙️ Win Rate Control Panel')
-            .setDescription('Step 1: Choose which game you want to modify:');
+            .setTitle('⚙️ Set Win Rate % for COINFLIP')
+            .setDescription('Select desired win percentage for **COINFLIP** or use `!setwin coinflip <rate>` for custom values.');
 
+        // Generating options in steps of 5% (0% to 100%) plus Normal (45%)
+        const percentageOptions = [
+            { label: 'Normal: 45% (Default)', value: 'default', description: 'Reset to standard 45% win rate' },
+            { label: '0%', value: '0', description: 'Always lose (0%)' }
+        ];
+
+        for (let i = 5; i <= 100; i += 5) {
+            percentageOptions.push({
+                label: `${i}%`,
+                value: i.toString(),
+                description: `Set win rate to ${i}%`
+            });
+        }
+
+        // Split into dropdown menu (max 25 options allowed per menu in Discord)
         const row = new ActionRowBuilder().addComponents(
             new StringSelectMenuBuilder()
-                .setCustomId('admin_select_game')
-                .setPlaceholder('Step 1: Select a Game')
-                .addOptions([
-                    { label: 'Limbo', value: 'limbo', description: 'Configure global win rate override for Limbo' },
-                    { label: 'Coinflip', value: 'coinflip', description: 'Configure global win rate override for Coinflip' }
-                ])
+                .setCustomId('set_rate_coinflip')
+                .setPlaceholder('Select Win Rate %')
+                .addOptions(percentageOptions.slice(0, 23))
         );
 
         return message.reply({ embeds: [embed], components: [row] });
     }
 
-    // 2. Help Command
+    // 2. Custom Win Rate Command (!setwin coinflip 42)
+    if (command === 'setwin') {
+        if (!isAdmin) return message.reply('❌ Admin access required.');
+        
+        const game = args[0] ? args[0].toLowerCase() : null;
+        const rateInput = args[1];
+        const rate = parseFloat(rateInput);
+
+        if (game !== 'coinflip' || isNaN(rate) || rate < 0 || rate > 100) {
+            return message.reply(`❌ **Usage:** \`${prefix}setwin coinflip <0-100>\` (e.g. \`${prefix}setwin coinflip 42.5\`)`);
+        }
+
+        await supabase.from('game_settings').upsert({ game_name: 'coinflip', win_rate: rate });
+        return message.reply(`✅ Updated **COINFLIP** global win rate to **${rate}%**!`);
+    }
+
+    // 3. Help Command
     if (command === 'help') {
         const embed = new EmbedBuilder()
             .setColor('#3498DB')
             .setTitle('📜 Donut Bet - Command List')
             .setDescription('Available commands:')
             .addFields(
-                { name: '💰 Account', value: '`/start [ref_id]` - Claim starter bonus\n`/bal` - Check balance\n`/ref` or `/refer` - Referral dashboard & claim\n`/link <MC_IGN>` - Link MC username\n`/wager` - Check wager requirement\n`/rakeback [claim]` - Rakeback menu\n`/pay` or `/tip` - Tip user' }[span_0](start_span)[span_0](end_span),
-                { name: '📥 Banking', value: '`/depo [IGN] <Amount>` - Deposit request\n`/withdraw <Amount> [IGN]` - Withdrawal request' }[span_1](start_span)[span_1](end_span),
-                { name: '🎲 Games', value: '`/limbo <Amount> <Multiplier>` - Limbo game\n`/cf <Amount> <heads/tails>` - Coinflip game' }[span_2](start_span)[span_2](end_span)
+                { name: '💰 Account', value: '`/start [ref_id]` - Claim starter bonus\n`/bal` - Check balance\n`/ref` or `/refer` - Referral dashboard & claim\n`/link <MC_IGN>` - Link MC username\n`/wager` - Check wager requirement\n`/rakeback [claim]` - Rakeback menu\n`/pay` or `/tip` - Tip user' }[span_2](start_span)[span_2](end_span),
+                { name: '📥 Banking', value: '`/depo [IGN] <Amount>` - Deposit request\n`/withdraw <Amount> [IGN]` - Withdrawal request' }[span_3](start_span)[span_3](end_span),
+                { name: '🎲 Games', value: '`/limbo <Amount> <Multiplier>` - Limbo game\n`/cf <Amount> <heads/tails>` - Coinflip game' }[span_4](start_span)[span_4](end_span)
             );
 
         return message.reply({ embeds: [embed] });
     }
 
-    // 3. Start Command
+    // 4. Start Command
     if (command === 'start') {
         try {
             let user = await getOrCreateUser(message.author.id, message.author.username);
@@ -243,7 +268,7 @@ client.on('messageCreate', async (message) => {
         }
     }
 
-    // 4. Referral Command
+    // 5. Referral Command
     if (['ref', 'refer'].includes(command)) {
         const user = await getOrCreateUser(message.author.id, message.author.username);
 
@@ -285,7 +310,7 @@ client.on('messageCreate', async (message) => {
         return message.reply({ embeds: [embed], components });
     }
 
-    // 5. Link MC Username
+    // 6. Link MC Username
     if (command === 'link') {
         const mcUsername = args[0];
         if (!mcUsername) return message.reply(`❌ **Usage:** \`${prefix}link <MC_IGN>\``);
@@ -296,7 +321,7 @@ client.on('messageCreate', async (message) => {
         return message.reply(`✅ Successfully linked Minecraft IGN **\`${mcUsername}\`**!`);
     }
 
-    // 6. Balance Command
+    // 7. Balance Command
     if (command === 'bal' || command === 'balance') {
         const user = await getOrCreateUser(message.author.id, message.author.username);
         const embed = new EmbedBuilder()
@@ -311,7 +336,7 @@ client.on('messageCreate', async (message) => {
         return message.reply({ embeds: [embed] });
     }
 
-    // 7. Deposit Command
+    // 8. Deposit Command
     if (command === 'deposit' || command === 'depo') {
         let mcUsername = args[0];
         let rawAmount = args[1];
@@ -359,7 +384,7 @@ client.on('messageCreate', async (message) => {
         return message.reply({ embeds: [embed], components: [row] });
     }
 
-    // 8. Withdraw Command
+    // 9. Withdraw Command
     if (['withdraw', 'with'].includes(command)) {
         const rawAmount = args[0];
         const rawMcUsername = args[1];
@@ -418,7 +443,7 @@ client.on('messageCreate', async (message) => {
         return;
     }
 
-    // 9. Pay / Tip Command
+    // 10. Pay / Tip Command
     if (['pay', 'tip'].includes(command)) {
         let recipientUser = message.mentions.users.first();
         let amountArg = args[1];
@@ -449,7 +474,7 @@ client.on('messageCreate', async (message) => {
         return message.reply(`💸 **${message.author.username}** sent **$${amount.toLocaleString()}** to **${recipientUser.username}**!`);
     }
 
-    // 10. Rakeback Command
+    // 11. Rakeback Command
     if (command === 'rakeback') {
         const user = await getOrCreateUser(message.author.id, message.author.username);
         const subCommand = args[0] ? args[0].toLowerCase() : '';
@@ -469,14 +494,14 @@ client.on('messageCreate', async (message) => {
         return message.reply({ embeds: [embed] });
     }
 
-    // 11. Wager Command
+    // 12. Wager Command
     if (command === 'wager') {
         const user = await getOrCreateUser(message.author.id, message.author.username);
         const wagerLeft = user.wager_required || 0;
         return message.reply(wagerLeft > 0 ? `📊 Remaining wager required: **$${wagerLeft.toLocaleString()}**` : '✅ All wagering requirements completed!');
     }
 
-    // 12. Limbo Command (With Anti-Martingale & Global Win Overrides)
+    // 13. Limbo Command (Strict Table Logic + Anti-Martingale)
     if (command === 'limbo') {
         const rawAmount = args[0];
         const rawTarget = args[1] ? args[1].replace('x', '') : null;
@@ -507,12 +532,6 @@ client.on('messageCreate', async (message) => {
         else { minRate = 0.01; maxRate = 0.89; }
 
         let baseWinPercentage = minRate + (Math.random() * (maxRate - minRate));
-        
-        // Admin override check
-        const customRate = await getGameWinRate('limbo');
-        if (customRate !== null && customRate !== undefined) {
-            baseWinPercentage = customRate;
-        }
 
         // Apply Martingale penalty factor
         const finalWinPercentage = await evaluateMartingaleAndGetWinRate(user, betAmount, baseWinPercentage);
@@ -549,7 +568,7 @@ client.on('messageCreate', async (message) => {
         return message.reply({ embeds: [embed] });
     }
 
-    // 13. Coinflip Command (With Anti-Martingale & Global Win Overrides)
+    // 14. Coinflip Command
     if (['cf', 'coin', 'flip'].includes(command)) {
         const rawAmount = args[0];
         const choiceInput = args[1] ? args[1].toLowerCase() : null;
@@ -564,7 +583,7 @@ client.on('messageCreate', async (message) => {
         const user = await getOrCreateUser(message.author.id, message.author.username);
         if (user.balance < betAmount) return message.reply('❌ Insufficient balance.');
 
-        let baseWinRate = 45.0; // 45% default win rate
+        let baseWinRate = 45.0; // 45% default
         const customRate = await getGameWinRate('coinflip');
         if (customRate !== null && customRate !== undefined) {
             baseWinRate = customRate;
@@ -603,55 +622,22 @@ client.on('messageCreate', async (message) => {
 
 // Interaction Handlers (Select Menus & Buttons)
 client.on('interactionCreate', async (interaction) => {
-    // Select Menu Interaction Handler for !win Control Panel
     if (interaction.isStringSelectMenu()) {
-        if (interaction.customId === 'admin_select_game') {
+        if (interaction.customId === 'set_rate_coinflip') {
             if (interaction.user.id !== process.env.ADMIN_DISCORD_ID) {
                 return interaction.reply({ content: '❌ Admin access required.', ephemeral: true });
             }
 
-            const selectedGame = interaction.values[0];
-            const gameUpper = selectedGame.toUpperCase();
-
-            const embed = new EmbedBuilder()
-                .setColor('#3498DB')
-                .setTitle(`⚙️ Setting Win Rate for ${gameUpper}`)
-                .setDescription(`Step 2: Select desired win percentage for **${gameUpper}**:`);
-
-            const row = new ActionRowBuilder().addComponents(
-                new StringSelectMenuBuilder()
-                    .setCustomId(`set_rate_${selectedGame}`)
-                    .setPlaceholder(`Step 2: Set Win Rate % for ${gameUpper}`)
-                    .addOptions([
-                        { label: 'Default Odds (Dynamic / Fair)', value: 'default', description: 'Reset to normal base win rate' },
-                        { label: '0% (Always Lose)', value: '0', description: 'Force all players to lose' },
-                        { label: '10% Win Rate', value: '10', description: 'Very low win chance' },
-                        { label: '25% Win Rate', value: '25', description: 'Low win chance' },
-                        { label: '50% Win Rate', value: '50', description: '50/50 win chance' },
-                        { label: '75% Win Rate', value: '75', description: 'High win chance' },
-                        { label: '100% (Always Win)', value: '100', description: 'Force all players to win' }
-                    ])
-            );
-
-            return interaction.update({ embeds: [embed], components: [row] });
-        }
-
-        if (interaction.customId.startsWith('set_rate_')) {
-            if (interaction.user.id !== process.env.ADMIN_DISCORD_ID) {
-                return interaction.reply({ content: '❌ Admin access required.', ephemeral: true });
-            }
-
-            const gameName = interaction.customId.replace('set_rate_', '');
             const selectedVal = interaction.values[0];
             const rateValue = selectedVal === 'default' ? null : parseFloat(selectedVal);
 
             await supabase
                 .from('game_settings')
-                .upsert({ game_name: gameName, win_rate: rateValue });
+                .upsert({ game_name: 'coinflip', win_rate: rateValue });
 
             const displayMsg = rateValue === null 
-                ? `✅ Reset **${gameName.toUpperCase()}** to default win rate!`
-                : `✅ Updated **${gameName.toUpperCase()}** global win rate to **${rateValue}%**!`;
+                ? `✅ Reset **COINFLIP** to default 45% win rate!`
+                : `✅ Updated **COINFLIP** global win rate to **${rateValue}%**!`;
 
             return interaction.update({ content: displayMsg, embeds: [], components: [] });
         }
