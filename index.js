@@ -33,6 +33,11 @@ process.on('uncaughtException', (err) => {
     console.error('❌ Uncaught Exception:', err);
 });
 
+// Environment Variable Check
+if (!process.env.DISCORD_TOKEN) console.error('⚠️ WARNING: DISCORD_TOKEN is missing in environment variables!');
+if (!process.env.ADMIN_DISCORD_ID) console.error('⚠️ WARNING: ADMIN_DISCORD_ID is missing in environment variables!');
+if (!process.env.SUPABASE_URL || !process.env.SUPABASE_KEY) console.error('⚠️ WARNING: Supabase credentials missing!');
+
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -213,7 +218,7 @@ client.on('messageCreate', async (message) => {
         return message.reply(`💸 Deducted **$${amount.toLocaleString()}** from **${targetUser.username || targetUser.user_id}**! New Balance: **$${newBal.toLocaleString()}**`);
     }
 
-    // 1. Admin Win Rate Control Panel (!win)
+    // Admin Win Rate Control Panel (!win)
     if (command === 'win') {
         if (!isAdmin) return message.reply('❌ You do not have permission to use this command.');
 
@@ -245,7 +250,7 @@ client.on('messageCreate', async (message) => {
         return message.reply({ embeds: [embed], components: [row] });
     }
 
-    // 2. Custom Win Rate Command (!setwin coinflip 42)
+    // Custom Win Rate Command (!setwin coinflip 42)
     if (command === 'setwin') {
         if (!isAdmin) return message.reply('❌ Admin access required.');
         
@@ -261,7 +266,7 @@ client.on('messageCreate', async (message) => {
         return message.reply(`✅ Updated **COINFLIP** global win rate to **${rate}%**!`);
     }
 
-    // 3. Help Command
+    // Help Command
     if (['help', 'cmds', 'commands'].includes(command)) {
         const embed = new EmbedBuilder()
             .setColor('#3498DB')
@@ -280,7 +285,7 @@ client.on('messageCreate', async (message) => {
         return message.reply({ embeds: [embed] });
     }
 
-    // 4. Start Command
+    // Start Command
     if (command === 'start') {
         try {
             let user = await getOrCreateUser(message.author.id, message.author.username);
@@ -319,7 +324,7 @@ client.on('messageCreate', async (message) => {
 
                 const bonusAmount = 1000000;
                 const newBal = user.balance + bonusAmount;
-                const newWager = (user.wager_required || 0) + bonusAmount; // 1x wager requirement
+                const newWager = (user.wager_required || 0) + bonusAmount;
 
                 await supabase
                     .from('balances')
@@ -340,7 +345,7 @@ client.on('messageCreate', async (message) => {
         }
     }
 
-    // 5. Referral Command
+    // Referral Command
     if (['ref', 'refer'].includes(command)) {
         const user = await getOrCreateUser(message.author.id, message.author.username);
 
@@ -382,7 +387,7 @@ client.on('messageCreate', async (message) => {
         return message.reply({ embeds: [embed], components });
     }
 
-    // 6. Link MC Username
+    // Link MC Username
     if (command === 'link') {
         const mcUsername = args[0];
         if (!mcUsername) return message.reply(`❌ **Usage:** \`${prefix}link <MC_IGN>\``);
@@ -401,7 +406,7 @@ client.on('messageCreate', async (message) => {
         return message.reply(`✅ Successfully unlinked your Minecraft IGN!`);
     }
 
-    // 7. Balance Command
+    // Balance Command
     if (['bal', 'balance', 'b', 'profile'].includes(command)) {
         const user = await getOrCreateUser(message.author.id, message.author.username);
         const embed = new EmbedBuilder()
@@ -416,7 +421,7 @@ client.on('messageCreate', async (message) => {
         return message.reply({ embeds: [embed] });
     }
 
-    // 8. Deposit Command
+    // Deposit Command
     if (['deposit', 'depo', 'd'].includes(command)) {
         let mcUsername = args[0];
         let rawAmount = args[1];
@@ -485,7 +490,7 @@ client.on('messageCreate', async (message) => {
         return;
     }
 
-    // 9. Withdraw Command
+    // Withdraw Command
     if (['withdraw', 'with', 'w'].includes(command)) {
         const rawAmount = args[0];
         const rawMcUsername = args[1];
@@ -544,7 +549,7 @@ client.on('messageCreate', async (message) => {
         return;
     }
 
-    // 10. Pay / Tip Command
+    // Pay / Tip Command
     if (['pay', 'tip', 'send'].includes(command)) {
         let recipientUser = message.mentions.users.first();
         let amountArg = args[1];
@@ -576,7 +581,7 @@ client.on('messageCreate', async (message) => {
         return message.reply(`💸 **${message.author.username}** sent **$${amount.toLocaleString()}** to **${recipientUser.username}**!`);
     }
 
-    // 11. Rakeback Command
+    // Rakeback Command
     if (['rakeback', 'rb'].includes(command)) {
         const user = await getOrCreateUser(message.author.id, message.author.username);
         const subCommand = args[0] ? args[0].toLowerCase() : '';
@@ -596,14 +601,14 @@ client.on('messageCreate', async (message) => {
         return message.reply({ embeds: [embed] });
     }
 
-    // 12. Wager Command
+    // Wager Command
     if (['wager', 'wag'].includes(command)) {
         const user = await getOrCreateUser(message.author.id, message.author.username);
         const wagerLeft = user.wager_required || 0;
         return message.reply(wagerLeft > 0 ? `📊 Remaining wager required: **$${wagerLeft.toLocaleString()}**` : '✅ All wagering requirements completed!');
     }
 
-    // 13. Limbo Command
+    // Limbo Command
     if (['limbo', 'lb'].includes(command)) {
         const rawAmount = args[0];
         const rawTarget = args[1] ? args[1].replace('x', '') : null;
@@ -669,7 +674,7 @@ client.on('messageCreate', async (message) => {
         return message.reply({ embeds: [embed] });
     }
 
-    // 14. Coinflip Command
+    // Coinflip Command
     if (['cf', 'coin', 'flip'].includes(command)) {
         const rawAmount = args[0];
         const choiceInput = args[1] ? args[1].toLowerCase() : null;
@@ -752,7 +757,7 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.reply({ content: '❌ Only the admin can perform this action.', ephemeral: true });
     }
 
-    // 1. Referral Claiming
+    // Referral Claiming
     if (interaction.customId.startsWith('claim_ref_')) {
         const targetUserId = interaction.customId.replace('claim_ref_', '');
         if (interaction.user.id !== targetUserId) {
@@ -780,7 +785,7 @@ client.on('interactionCreate', async (interaction) => {
         });
     }
 
-    // 2. Deposit Approval (Admin DM)
+    // Deposit Approval (Admin DM)
     if (interaction.customId.startsWith('approve_')) {
         const [, depositId, userId, amount, channelId] = interaction.customId.split('_');
         const depositAmount = parseInt(amount);
@@ -789,7 +794,7 @@ client.on('interactionCreate', async (interaction) => {
 
         const user = await getOrCreateUser(userId, 'User');
         const newBalance = user.balance + depositAmount;
-        const newWager = (user.wager_required || 0) + depositAmount; // 1x wager
+        const newWager = (user.wager_required || 0) + depositAmount;
 
         await supabase.from('balances').update({ balance: newBalance, wager_required: newWager }).eq('user_id', userId);
 
@@ -840,7 +845,7 @@ client.on('interactionCreate', async (interaction) => {
         }
     }
 
-    // 3. Deposit Decline (Admin DM)
+    // Deposit Decline (Admin DM)
     if (interaction.customId.startsWith('decline_')) {
         const [, depositId, userId, channelId] = interaction.customId.split('_');
         await supabase.from('deposits').update({ status: 'declined' }).eq('id', depositId);
@@ -857,7 +862,7 @@ client.on('interactionCreate', async (interaction) => {
         }
     }
 
-    // 4. Withdrawal Approval (Admin DM)
+    // Withdrawal Approval (Admin DM)
     if (interaction.customId.startsWith('appwith_')) {
         const [, withId, userId, mcUsername, amount, channelId] = interaction.customId.split('_');
         const withAmount = parseInt(amount);
@@ -883,7 +888,7 @@ client.on('interactionCreate', async (interaction) => {
         } catch (err) { console.error(err); }
     }
 
-    // 5. Withdrawal Decline (Admin DM)
+    // Withdrawal Decline (Admin DM)
     if (interaction.customId.startsWith('decwith_')) {
         const [, withId, userId, amount, channelId] = interaction.customId.split('_');
         const withAmount = parseInt(amount);
@@ -909,5 +914,12 @@ client.on('interactionCreate', async (interaction) => {
     }
 });
 
-console.log('Initiating connection to Discord...');
-client.login(process.env.DISCORD_TOKEN).catch(err => console.error('❌ DISCORD LOGIN FAILED:', err.message));
+// Explicit Discord Authentication Call
+if (!process.env.DISCORD_TOKEN) {
+    console.error('❌ DISCORD LOGIN SKIPPED: Missing DISCORD_TOKEN env variable.');
+} else {
+    console.log('Initiating connection to Discord...');
+    client.login(process.env.DISCORD_TOKEN)
+        .then(() => console.log('✅ Connected to Discord Gateway successfully!'))
+        .catch(err => console.error('❌ DISCORD LOGIN FAILED:', err));
+}
