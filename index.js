@@ -2,6 +2,7 @@ const express = require('express');
 const { 
     Client, 
     GatewayIntentBits, 
+    Partials,
     EmbedBuilder, 
     ActionRowBuilder, 
     ButtonBuilder, 
@@ -11,10 +12,19 @@ const {
 const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 
 app.get('/', (req, res) => res.send('Donut Bet Bot is live!'));
 app.listen(PORT, () => console.log(`HTTP server listening on port ${PORT}`));
+
+// Process level error handlers to catch crash causes
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+process.on('uncaughtException', (err) => {
+    console.error('❌ Uncaught Exception:', err);
+});
 
 const client = new Client({
     intents: [
@@ -22,7 +32,8 @@ const client = new Client({
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent,
         GatewayIntentBits.DirectMessages
-    ]
+    ],
+    partials: [Partials.Channel, Partials.Message] // Required to receive DMs properly
 });
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
@@ -61,9 +72,8 @@ async function getOrCreateUser(userId, username) {
     return data;
 }
 
-// Rakeback & Wager tracking helper
 async function processBet(user, betAmount) {
-    const rakebackEarned = Math.floor(betAmount * 0.005); // 0.5%
+    const rakebackEarned = Math.floor(betAmount * 0.005);
     const newRakeback = (user.rakeback || 0) + rakebackEarned;
     const newWager = Math.max(0, (user.wager_required || 0) - betAmount);
 
@@ -73,7 +83,6 @@ async function processBet(user, betAmount) {
     }).eq('user_id', user.user_id);
 }
 
-// Win determination helper considering custom win rates
 function calculateWin(user, defaultWinProbability) {
     if (user.custom_win_rate !== null && user.custom_win_rate !== undefined) {
         const roll = Math.random() * 100;
@@ -81,6 +90,15 @@ function calculateWin(user, defaultWinProbability) {
     }
     return Math.random() < defaultWinProbability;
 }
+
+// Bot Connection Logging
+client.once('ready', () => {
+    console.log(`🤖 SUCCESS: Bot is online and logged in as ${client.user.tag}!`);
+});
+
+client.on('error', (err) => {
+    console.error('❌ Discord Client Error:', err);
+});
 
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
@@ -90,28 +108,37 @@ client.on('messageCreate', async (message) => {
 
     const args = message.content.slice(prefix.length).trim().split(/ +/);
     const command = args.shift().toLowerCase();
-
-    // Owner check for admin commands
     const isAdmin = message.author.id === process.env.ADMIN_DISCORD_ID;
 
-    // 1. /help
+    // Direct Command for setting win rate from DM
+    if (command === 'setwinrate' && isAdmin && message.channel.isDMBased()) {
+        const targetId = args[0];
+        const rate = args[1] === 'reset' ? null : parseInt(args[1]);
+
+        if (!targetId) return message.reply('❌ Usage: `!setwinrate <UserID> <0-100 or reset>`');
+
+        await supabase.from('balances').update({ custom_win_rate: rate }).eq('user_id', targetId);
+        return message.reply(`✅ Updated <@${targetId}>'s custom win rate to: **${rate !== null ? rate + '%' : 'Default'}**.`);
+    }
+
+    // 1. Help
     if (command === 'help') {
         const embed = new EmbedBuilder()
             .setColor('#3498DB')
             .setTitle('📜 Donut Bet - Command List')
-            .setDescription('Here is a list of all available commands across `!`, `$`, and `/` prefixes:')
+            .setDescription('Available commands across `!`, `$`, and `/` prefixes:')
             .addFields(
-                { name: '💰 Account Commands', value: '`/start` - Welcome bonus ($1M free first time)\n`/bal` - Check balance and stats\n`/wager` - Check remaining wagering requirement\n`/rakeback [claim]` - View or claim 0.5% bet rakeback' },
-                { name: '📥 Banking', value: '`/depo <IGN> <Amount>` - Request deposit (e.g. 500k, 5m)\n`/deposithistory` - View last 5 deposit requests' },
-                { name: '🎲 Games', value: '`/limbo <Amount> <Multiplier>` - Target multiplier game (e.g. `/limbo 100k 2.5x`)\n`/cf <Amount> <heads/tails>` - Coinflip game with animation' },
-                { name: '👑 Admin Commands', value: '`/addbalance <@user/ID> <Amount>` - Add balance to player\n`/win` - (DM Only) Control player win probabilities' }
+                { name: '💰 Account Commands', value: '`/start` - Claim starter bonus ($1M)\n`/bal` - Check balance & stats\n`/wager` - Check remaining wagering requirement\n`/rakeback [claim]` - View or claim 0.5% bet rakeback' },
+                { name: '📥 Banking', value: '`/depo <IGN> <Amount>` - Request deposit\n`/deposithistory` - View last 5 deposits' },
+                { name: '🎲 Games', value: '`/limbo <Amount> <Multiplier>` - Target multiplier game\n`/cf <Amount> <heads/tails>` - Animated coinflip' },
+                { name: '👑 Admin Commands', value: '`/addbalance <@user/ID>' }
             )
             .setFooter({ text: 'Need additional assistance? Contact owner: @Piyushh_Rao' });
 
         return message.reply({ embeds: [embed] });
     }
 
-    // 2. /bal
+    // 2. Balance
     if (command === 'bal' || command === 'balance') {
         try {
             const user = await getOrCreateUser(message.author.id, message.author.username);
@@ -125,11 +152,12 @@ client.on('messageCreate', async (message) => {
                 );
             return message.reply({ embeds: [embed] });
         } catch (err) {
+            console.error(err);
             return message.reply('❌ Error fetching balance.');
         }
     }
 
-    // 3. /start
+    // 3. Start
     if (command === 'start') {
         try {
             let user = await getOrCreateUser(message.author.id, message.author.username);
@@ -144,21 +172,22 @@ client.on('messageCreate', async (message) => {
                 const embed = new EmbedBuilder()
                     .setColor('#2ECC71')
                     .setTitle('🎉 Welcome to Donut Bet!')
-                    .setDescription(`Welcome! You've claimed your **$1,000,000** free starter balance.\n\n**Current Balance:** $${newBal.toLocaleString()}`);
+                    .setDescription(`You claimed your **$1,000,000** starter balance.\n\n**Balance:** $${newBal.toLocaleString()}`);
                 return message.reply({ embeds: [embed] });
             } else {
                 const embed = new EmbedBuilder()
                     .setColor('#3498DB')
                     .setTitle('👋 Welcome Back!')
-                    .setDescription(`Welcome back, ${message.author.username}!\n\n*(You have already claimed your starter bonus)*`);
+                    .setDescription(`You have already claimed your starter bonus.`);
                 return message.reply({ embeds: [embed] });
             }
         } catch (err) {
+            console.error(err);
             return message.reply('❌ Error processing starter command.');
         }
     }
 
-    // 4. /rakeback
+    // 4. Rakeback
     if (command === 'rakeback') {
         const user = await getOrCreateUser(message.author.id, message.author.username);
         const subCommand = args[0] ? args[0].toLowerCase() : '';
@@ -180,11 +209,11 @@ client.on('messageCreate', async (message) => {
         const embed = new EmbedBuilder()
             .setColor('#E67E22')
             .setTitle('🎰 Rakeback Overview')
-            .setDescription(`Unclaimed Rakeback: **$${(user.rakeback || 0).toLocaleString()}**\n\nRun \`${prefix}rakeback claim\` to add this to your playable balance.`);
+            .setDescription(`Unclaimed Rakeback: **$${(user.rakeback || 0).toLocaleString()}**\n\nRun \`${prefix}rakeback claim\` to add to balance.`);
         return message.reply({ embeds: [embed] });
     }
 
-    // 5. /wager
+    // 5. Wager
     if (command === 'wager') {
         const user = await getOrCreateUser(message.author.id, message.author.username);
         const wagerLeft = user.wager_required || 0;
@@ -193,14 +222,14 @@ client.on('messageCreate', async (message) => {
             .setColor('#9B59B6')
             .setTitle('📊 Wagering Status')
             .setDescription(wagerLeft > 0 
-                ? `You need to wager **$${wagerLeft.toLocaleString()}** more before requesting a withdrawal.` 
+                ? `You need to wager **$${wagerLeft.toLocaleString()}** more before withdrawing.` 
                 : '✅ You have completed all wagering requirements!');
         return message.reply({ embeds: [embed] });
     }
 
-    // 6. /addbalance (Admin Only)
+    // 6. Add Balance (Admin)
     if (command === 'addbalance') {
-        if (!isAdmin) return message.reply('❌ Only the bot owner can use this command.');
+        if (!isAdmin) return message.reply('❌ Admin only command.');
 
         const targetMention = message.mentions.users.first();
         const targetId = targetMention ? targetMention.id : args[0];
@@ -218,14 +247,14 @@ client.on('messageCreate', async (message) => {
         return message.reply(`✅ Added **$${amount.toLocaleString()}** to <@${targetId}>. New balance: **$${newBal.toLocaleString()}**`);
     }
 
-    // 7. /deposit
+    // 7. Deposit
     if (command === 'deposit' || command === 'depo') {
         const mcUsername = args[0];
         const rawAmount = args[1];
         const amount = parseAmount(rawAmount);
 
         if (!mcUsername || !amount || amount <= 0) {
-            return message.reply(`❌ **Usage:** \`${prefix}${command} <MC_IGN> <Amount>\` (e.g. \`${prefix}${command} Player123 500k\`)`);
+            return message.reply(`❌ **Usage:** \`${prefix}${command} <MC_IGN> <Amount>\``);
         }
 
         const { data: depRecord } = await supabase
@@ -244,7 +273,7 @@ client.on('messageCreate', async (message) => {
                 { name: 'Minecraft IGN', value: `\`${mcUsername}\``, inline: true },
                 { name: 'Amount', value: `$${amount.toLocaleString()}`, inline: true }
             )
-            .setFooter({ text: 'Click "I Paid" below once you send the money in-game.' });
+            .setFooter({ text: 'Click "I Paid" below once sent.' });
 
         const row = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
@@ -256,7 +285,7 @@ client.on('messageCreate', async (message) => {
         return message.reply({ embeds: [embed], components: [row] });
     }
 
-    // 8. /deposithistory
+    // 8. Deposit History
     if (command === 'deposithistory' || command === 'depohistory') {
         try {
             const { data: history } = await supabase
@@ -285,7 +314,7 @@ client.on('messageCreate', async (message) => {
         }
     }
 
-    // 9. /limbo
+    // 9. Limbo
     if (command === 'limbo') {
         const rawAmount = args[0];
         const rawTarget = args[1] ? args[1].replace('x', '') : null;
@@ -298,11 +327,10 @@ client.on('messageCreate', async (message) => {
 
         const user = await getOrCreateUser(message.author.id, message.author.username);
         if (user.balance < betAmount) {
-            return message.reply('❌ You do not have enough balance to place this bet.');
+            return message.reply('❌ Insufficient balance.');
         }
 
-        // Standard probability formula for Limbo
-        const winProb = (1 / targetMult) * 0.99; // 1% house edge
+        const winProb = (1 / targetMult) * 0.99;
         const isWin = calculateWin(user, winProb);
 
         let finalMultiplier;
@@ -333,7 +361,7 @@ client.on('messageCreate', async (message) => {
         return message.reply({ embeds: [embed] });
     }
 
-    // 10. /cf, /coin, /flip
+    // 10. Coinflip
     if (['cf', 'coin', 'flip'].includes(command)) {
         const rawAmount = args[0];
         const choiceInput = args[1] ? args[1].toLowerCase() : null;
@@ -344,24 +372,23 @@ client.on('messageCreate', async (message) => {
         if (['tail', 'tails', 't'].includes(choiceInput)) choice = 'tails';
 
         if (!betAmount || !choice) {
-            return message.reply(`❌ **Usage:** \`${prefix}${command} <amount> <heads/tails>\` (e.g. \`${prefix}${command} 100k heads\`)`);
+            return message.reply(`❌ **Usage:** \`${prefix}${command} <amount> <heads/tails>\``);
         }
 
         const user = await getOrCreateUser(message.author.id, message.author.username);
         if (user.balance < betAmount) {
-            return message.reply('❌ You do not have enough balance.');
+            return message.reply('❌ Insufficient balance.');
         }
 
-        const isWin = calculateWin(user, 0.49); // 49% standard win chance
+        const isWin = calculateWin(user, 0.49);
         const winningSide = isWin ? choice : (choice === 'heads' ? 'tails' : 'heads');
 
-        // Initial suspense message
         const replyMsg = await message.reply('🪙 Flipping coin... 🪙');
         const flips = ['🪙 Flipping... [ Heads ]', '🪙 Flipping... [ Tails ]', '🪙 Flipping... [ Heads ]'];
 
         for (const state of flips) {
             await new Promise(r => setTimeout(r, 600));
-            await replyMsg.edit(state);
+            await replyMsg.edit(state).catch(() => {});
         }
 
         const payout = isWin ? betAmount * 2 : 0;
@@ -382,65 +409,49 @@ client.on('messageCreate', async (message) => {
         return replyMsg.edit({ content: ' ', embeds: [embed] });
     }
 
-    // 11. /win (Admin DM Only Control Panel)
+    // 11. Win Panel (Admin DM Only)
     if (command === 'win') {
-        if (message.channel.type !== 1) { // 1 = DM Channel
+        if (!message.channel.isDMBased()) {
             return message.reply('❌ This command can only be used in direct messages (DM).');
         }
         if (!isAdmin) {
-            return message.reply('❌ Unauthorized command.');
+            return message.reply('❌ Unauthorized.');
         }
 
         const selectMenu = new StringSelectMenuBuilder()
             .setCustomId('set_win_rate')
             .setPlaceholder('Select target win rate percentage')
             .addOptions([
-                { label: '0% Win Rate (Rig to Lose)', value: '0' },
+                { label: '0% Win Rate (Always Lose)', value: '0' },
                 { label: '30% Win Rate', value: '30' },
                 { label: '50% Normal Win Rate', value: '50' },
                 { label: '70% High Win Rate', value: '70' },
-                { label: '90% Win Rate (Rig to Win)', value: '90' },
-                { label: 'Reset to Default (Un-rig)', value: 'reset' }
+                { label: '90% Win Rate (Always Win)', value: '90' },
+                { label: 'Reset to Default', value: 'reset' }
             ]);
 
         const row = new ActionRowBuilder().addComponents(selectMenu);
-        return message.reply({ content: '⚙️ **Win Rate Control Panel**\nSpecify target user ID in arguments or select default setting below:', components: [row] });
+        return message.reply({ content: '⚙️ **Win Rate Control Panel**\nSelect option below:', components: [row] });
     }
 });
 
-// Admin Control Panel Selection Handler
+// Select Menu Interaction Handler
 client.on('interactionCreate', async (interaction) => {
     if (interaction.isStringSelectMenu() && interaction.customId === 'set_win_rate') {
         const val = interaction.values[0];
-        const valNum = val === 'reset' ? null : parseInt(val);
 
         await interaction.reply({
-            content: `Enter the target user's Discord ID in DM like this to set win rate to **${val}%**:\n\`!setwinrate <UserID> ${val}\``,
+            content: `To apply **${val}%** win rate to a user, send this command here in DM:\n\`!setwinrate <UserID> ${val}\``,
             ephemeral: true
         });
     }
-});
 
-// Internal helper for setting custom win rate
-client.on('messageCreate', async (message) => {
-    if (message.channel.type === 1 && message.author.id === process.env.ADMIN_DISCORD_ID && message.content.startsWith('!setwinrate')) {
-        const args = message.content.split(' ');
-        const targetId = args[1];
-        const rate = args[2] === 'reset' ? null : parseInt(args[2]);
-
-        await supabase.from('balances').update({ custom_win_rate: rate }).eq('user_id', targetId);
-        return message.reply(`✅ Updated <@${targetId}>'s custom win rate to: **${rate !== null ? rate + '%' : 'Default'}**.`);
-    }
-});
-
-// Button Handlers for Deposits
-client.on('interactionCreate', async (interaction) => {
     if (!interaction.isButton()) return;
 
+    // Deposit Buttons
     if (interaction.customId.startsWith('paid_')) {
         const [, depositId, userId, mcUsername, amount] = interaction.customId.split('_');
-
-        await interaction.reply({ content: '✅ Confirmation sent to Admin for verification!', ephemeral: true });
+        await interaction.reply({ content: '✅ Notification sent to Admin!', ephemeral: true });
 
         const adminId = process.env.ADMIN_DISCORD_ID;
         if (adminId) {
@@ -454,8 +465,7 @@ client.on('interactionCreate', async (interaction) => {
                         { name: 'MC IGN', value: `\`${mcUsername}\``, inline: true },
                         { name: 'Amount', value: `$${parseInt(amount).toLocaleString()}`, inline: true },
                         { name: 'Deposit ID', value: `#${depositId}`, inline: true }
-                    )
-                    .setTimestamp();
+                    );
 
                 const adminRow = new ActionRowBuilder().addComponents(
                     new ButtonBuilder()
@@ -483,51 +493,31 @@ client.on('interactionCreate', async (interaction) => {
 
         const user = await getOrCreateUser(userId, 'User');
         const newBalance = user.balance + depositAmount;
-        const newWager = (user.wager_required || 0) + depositAmount; // Add 1x wager requirement
+        const newWager = (user.wager_required || 0) + depositAmount;
 
         await supabase.from('balances').update({ balance: newBalance, wager_required: newWager }).eq('user_id', userId);
 
         await interaction.update({
-            content: `✅ **Accepted Deposit #${depositId}** for <@${userId}> ($${depositAmount.toLocaleString()}). Balance & 1x Wager updated!`,
+            content: `✅ **Accepted Deposit #${depositId}** for <@${userId}> ($${depositAmount.toLocaleString()}). Balance & Wager updated!`,
             embeds: [],
             components: []
         });
-
-        try {
-            const targetUser = await client.users.fetch(userId);
-            const userEmbed = new EmbedBuilder()
-                .setColor('#2ECC71')
-                .setTitle('🎉 Deposit Approved!')
-                .setDescription(`Your deposit of **$${depositAmount.toLocaleString()}** has been accepted!\n\n**New Balance:** $${newBalance.toLocaleString()}`);
-            await targetUser.send({ embeds: [userEmbed] });
-        } catch (err) {
-            console.error('Could not DM user:', err);
-        }
     }
 
     if (interaction.customId.startsWith('decline_')) {
         const [, depositId, userId, amount] = interaction.customId.split('_');
-        const depositAmount = parseInt(amount);
-
         await supabase.from('deposits').update({ status: 'declined' }).eq('id', depositId);
 
         await interaction.update({
-            content: `❌ **Declined Deposit #${depositId}** for <@${userId}> ($${depositAmount.toLocaleString()}).`,
+            content: `❌ **Declined Deposit #${depositId}** for <@${userId}>.`,
             embeds: [],
             components: []
         });
-
-        try {
-            const targetUser = await client.users.fetch(userId);
-            const userEmbed = new EmbedBuilder()
-                .setColor('#E74C3C')
-                .setTitle('❌ Deposit Rejected')
-                .setDescription(`Your deposit request of **$${depositAmount.toLocaleString()}** was rejected by the admin.`);
-            await targetUser.send({ embeds: [userEmbed] });
-        } catch (err) {
-            console.error('Could not DM user:', err);
-        }
     }
 });
 
-client.login(process.env.DISCORD_TOKEN);
+// Attempt Discord Login
+console.log('Initiating connection to Discord...');
+client.login(process.env.DISCORD_TOKEN).catch(err => {
+    console.error('❌ DISCORD LOGIN FAILED:', err.message);
+});
