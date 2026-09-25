@@ -5,7 +5,7 @@ const { EmbedBuilder } = require('discord.js');
 async function handleGeneralCommands(command, args, message, prefix) {
     const user = await getOrCreateUser(message.author.id, message.author.username);
 
-    // Profile & Balance Check
+    // Balance / Profile Command
     if (['bal', 'balance', 'b', 'profile'].includes(command)) {
         const embed = new EmbedBuilder()
             .setColor('#F1C40F')
@@ -17,17 +17,17 @@ async function handleGeneralCommands(command, args, message, prefix) {
                 { name: 'Wager Left', value: `$${(user.wager_required || 0).toLocaleString()}`, inline: true }
             );
         await message.reply({ embeds: [embed] });
-        return true;
+        return true; // Explicitly return true
     }
 
-    // Help Menu
+    // Help Command
     if (['help', 'cmds', 'commands'].includes(command)) {
         const embed = new EmbedBuilder()
             .setColor('#3498DB')
             .setTitle('📜 Donut Bet - Command List')
             .setDescription(`Prefixes: \`${prefix}\``)
             .addFields(
-                { name: '💰 Account', value: `\`${prefix}bal\` - Check balance\n\`${prefix}ref\` - Referral dashboard & link\n\`${prefix}linkref <user_id>\` - Link a referrer\n\`${prefix}link <MC_IGN>\` - Link Minecraft IGN` },
+                { name: '💰 Account', value: `\`${prefix}bal\` - Check balance\n\`${prefix}ref\` - Referral dashboard\n\`${prefix}linkref <user_id>\` - Link referrer\n\`${prefix}link <MC_IGN>\` - Link Minecraft IGN` },
                 { name: '📥 Banking', value: `\`${prefix}depo <Amount>\` - Deposit request\n\`${prefix}withdraw <Amount>\` - Withdrawal request\n\`${prefix}pay <user> <amount>\` - Tip/Transfer` },
                 { name: '🎲 Games', value: `\`${prefix}limbo <Amount> <Multiplier>\` - Limbo game\n\`${prefix}cf <Amount> <heads/tails>\` - Coinflip` }
             );
@@ -35,7 +35,7 @@ async function handleGeneralCommands(command, args, message, prefix) {
         return true;
     }
 
-    // New Referral Dashboard
+    // Referral Dashboard Command
     if (['ref', 'refer', 'referral'].includes(command)) {
         const { data: refList } = await supabase
             .from('balances')
@@ -78,7 +78,7 @@ async function handleGeneralCommands(command, args, message, prefix) {
         return true;
     }
 
-    // Link Referrer Command
+    // Link Referrer
     if (command === 'linkref') {
         const referrerId = args[0];
 
@@ -117,7 +117,7 @@ async function handleGeneralCommands(command, args, message, prefix) {
         return true;
     }
 
-    // Link Minecraft IGN
+    // Link MC IGN
     if (command === 'link') {
         const mcUsername = args[0];
         if (!mcUsername) {
@@ -134,7 +134,7 @@ async function handleGeneralCommands(command, args, message, prefix) {
         return true;
     }
 
-    return false; // Return false so index.js knows to try next module if not matched
+    return false; // Command not handled in this module
 }
 
 module.exports = { handleGeneralCommands };
