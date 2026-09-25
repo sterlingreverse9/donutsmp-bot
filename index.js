@@ -116,73 +116,62 @@ client.on('messageCreate', async (message) => {
     const command = args.shift().toLowerCase();
     const isAdmin = message.author.id === process.env.ADMIN_DISCORD_ID;
 
-    // Admin Win Rate override (For coinflip)
-    if (command === 'setgamewinrate' && isAdmin && message.channel.isDMBased()) {
-        const game = args[0]?.toLowerCase();
-        const rate = args[1] === 'reset' ? null : parseInt(args[1]);
-
-        if (!game || game !== 'coinflip') {
-            return message.reply('❌ Valid game for custom override: `coinflip`');
-        }
-
-        await supabase.from('game_settings').upsert({ game_name: game, win_rate: rate });
-        return message.reply(`✅ Updated **${game.toUpperCase()}** global win rate to: **${rate !== null ? rate + '%' : 'Default (45%)'}**.`);
-    }
-
     // 1. Help Command
     if (command === 'help') {
         const embed = new EmbedBuilder()
             .setColor('#3498DB')
             .setTitle('📜 Donut Bet - Command List')
-            .setDescription('Available commands across `!`, `$`, and `/` prefixes:')
+            .setDescription('Available commands:')
             .addFields(
-                { name: '💰 Account Commands', value: '`/start` - Claim starter bonus ($1M)\n`/bal` - Check balance & stats\n`/link <MC_IGN>` - Link default Minecraft username\n`/wager` - Check remaining wagering requirement\n`/rakeback [claim]` - View or claim 0.5% bet rakeback\n`/pay` or `/tip` - Tip another user (or reply to tip)' },
-                { name: '📥 Banking', value: '`/depo [IGN] <Amount>` - Request deposit\n`/withdraw <Amount> [IGN]` - Request withdrawal\n`/deposithistory` - View last 5 deposits' },
-                { name: '🎲 Games', value: '`/limbo <Amount> <Multiplier>` - Target multiplier game\n`/cf <Amount> <heads/tails>` - Animated coinflip' }
-            )
-            .setFooter({ text: 'Need additional assistance? Contact owner: @Piyushh_Rao' });
+                { name: '💰 Account', value: '`/start [ref_id]` - Claim starter bonus\n`/bal` - Check balance\n`/ref` or `/refer` - Referral dashboard & claim\n`/link <MC_IGN>` - Link MC username\n`/wager` - Check wager requirement\n`/rakeback [claim]` - Rakeback menu\n`/pay` or `/tip` - Tip user' },
+                { name: '📥 Banking', value: '`/depo [IGN] <Amount>` - Deposit request\n`/withdraw <Amount> [IGN]` - Withdrawal request' },
+                { name: '🎲 Games', value: '`/limbo <Amount> <Multiplier>` - Limbo game\n`/cf <Amount> <heads/tails>` - Coinflip game' }
+            );
 
         return message.reply({ embeds: [embed] });
     }
 
-    // 2. Link MC Username
-    if (command === 'link') {
-        const mcUsername = args[0];
-        if (!mcUsername) {
-            return message.reply(`❌ **Usage:** \`${prefix}link <MC_IGN>\``);
-        }
-
-        await getOrCreateUser(message.author.id, message.author.username);
-        await supabase.from('balances').update({ mc_username: mcUsername }).eq('user_id', message.author.id);
-
-        return message.reply(`✅ Successfully linked Minecraft IGN **\`${mcUsername}\`** to your account!`);
-    }
-
-    // 3. Balance
-    if (command === 'bal' || command === 'balance') {
-        try {
-            const user = await getOrCreateUser(message.author.id, message.author.username);
-            const embed = new EmbedBuilder()
-                .setColor('#F1C40F')
-                .setTitle(`💰 ${message.author.username}'s Profile`)
-                .addFields(
-                    { name: 'Balance', value: `$${user.balance.toLocaleString()}`, inline: true },
-                    { name: 'Linked IGN', value: user.mc_username ? `\`${user.mc_username}\`` : 'None (`/link`)', inline: true },
-                    { name: 'Rakeback', value: `$${(user.rakeback || 0).toLocaleString()}`, inline: true },
-                    { name: 'Wager Left', value: `$${(user.wager_required || 0).toLocaleString()}`, inline: true }
-                );
-            return message.reply({ embeds: [embed] });
-        } catch (err) {
-            return message.reply('❌ Error fetching balance.');
-        }
-    }
-
-    // 4. Start Command
+    // 2. Start Command (With Referral Tracking & DM Notification)
     if (command === 'start') {
         try {
             let user = await getOrCreateUser(message.author.id, message.author.username);
+            const refCode = args[0];
 
             if (!user.claimed_starter) {
+                let refNotice = '';
+
+                // Link referral if provided and not self
+                if (refCode && refCode !== message.author.id && !user.referred_by) {
+                    const { data: referrer } = await supabase
+                        .from('balances')
+                        .select('*')
+                        .eq('user_id', refCode)
+                        .single();
+
+                    if (referrer) {
+                        await supabase.from('balances').update({ referred_by: refCode }).eq('user_id', message.author.id);
+                        
+                        await supabase.from('referrals').insert([{
+                            referrer_id: refCode,
+                            referred_id: message.author.id,
+                            referred_username: message.author.username,
+                            qualifying_deposit_done: false
+                        }]);
+
+                        refNotice = `\n\n🔗 Linked as referral under <@${refCode}>!`;
+
+                        // DM Referrer about new user joining
+                        try {
+                            const referrerUser = await client.users.fetch(refCode);
+                            if (referrerUser) {
+                                await referrerUser.send(`🎉 **New Referral Joined!** User **${message.author.username}** (<@${message.author.id}>) registered using your referral command!`);
+                            }
+                        } catch (err) {
+                            console.error('Could not DM referrer on join:', err);
+                        }
+                    }
+                }
+
                 const newBal = user.balance + 1000000;
                 const newWager = (user.wager_required || 0) + 1000000;
 
@@ -194,93 +183,83 @@ client.on('messageCreate', async (message) => {
                 const embed = new EmbedBuilder()
                     .setColor('#2ECC71')
                     .setTitle('🎉 Welcome to Donut Bet!')
-                    .setDescription(`You claimed your **$1,000,000** starter bonus!\n*(A 1x wager requirement of $1M has been added)*\n\n**Balance:** $${newBal.toLocaleString()}`);
+                    .setDescription(`You claimed your **$1,000,000** starter bonus!${refNotice}\n\n**Balance:** $${newBal.toLocaleString()}`);
                 return message.reply({ embeds: [embed] });
             } else {
-                const embed = new EmbedBuilder()
-                    .setColor('#3498DB')
-                    .setTitle('👋 Welcome Back!')
-                    .setDescription(`You have already claimed your starter bonus.`);
-                return message.reply({ embeds: [embed] });
+                return message.reply('👋 You have already claimed your starter bonus.');
             }
         } catch (err) {
+            console.error(err);
             return message.reply('❌ Error processing starter command.');
         }
     }
 
-    // 5. Withdraw Command
-    if (['withdraw', 'with'].includes(command)) {
-        const rawAmount = args[0];
-        const rawMcUsername = args[1];
-
-        const amount = parseAmount(rawAmount);
+    // 3. Referral Command (/ref or /refer)
+    if (['ref', 'refer'].includes(command)) {
         const user = await getOrCreateUser(message.author.id, message.author.username);
 
-        const mcUsername = rawMcUsername || user.mc_username;
+        const { data: refList } = await supabase
+            .from('referrals')
+            .select('*')
+            .eq('referrer_id', message.author.id);
 
-        if (!amount || amount <= 0) {
-            return message.reply(`❌ **Usage:** \`${prefix}${command} <amount> [MC_IGN]\``);
+        const totalRefs = refList ? refList.length : 0;
+        const refNames = refList && refList.length > 0 
+            ? refList.map((r, idx) => `${idx + 1}. **${r.referred_username || 'User'}** (<@${r.referred_id}>) -${r.qualifying_deposit_done ? '✅ Qualified' : '⏳ Pending Deposit ($15M+)'}`).join('\n')
+            : 'No referred users yet.';
+
+        const refLink = `Use command: \`${prefix}start ${message.author.id}\``;
+        const pendingReward = user.unclaimed_ref_rewards || 0;
+
+        const embed = new EmbedBuilder()
+            .setColor('#9B59B6')
+            .setTitle('🤝 Referral Dashboard')
+            .setDescription(`Invite friends to earn **$30,000,000** for every friend who deposits **$15,000,000** or more!`)
+            .addFields(
+                { name: 'Your Referral Command', value: refLink, inline: false },
+                { name: 'Total Referrals', value: `${totalRefs} Users`, inline: true },
+                { name: 'Unclaimed Rewards', value: `$${pendingReward.toLocaleString()}`, inline: true },
+                { name: 'Referred Users', value: refNames, inline: false }
+            );
+
+        const components = [];
+        if (pendingReward > 0) {
+            const row = new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`claim_ref_${message.author.id}`)
+                    .setLabel(`Claim $${pendingReward.toLocaleString()}`)
+                    .setStyle(ButtonStyle.Success)
+            );
+            components.push(row);
         }
 
-        if (!mcUsername) {
-            return message.reply(`❌ No Minecraft username provided or linked. Use \`${prefix}link <MC_IGN>\` or specify it in the command.`);
-        }
+        return message.reply({ embeds: [embed], components });
+    }
 
-        if ((user.wager_required || 0) > 0) {
-            return message.reply(`❌ You cannot withdraw yet! You still need to wager **$${user.wager_required.toLocaleString()}**.`);
-        }
+    // 4. Link MC Username
+    if (command === 'link') {
+        const mcUsername = args[0];
+        if (!mcUsername) return message.reply(`❌ **Usage:** \`${prefix}link <MC_IGN>\``);
 
-        if (user.balance < amount) {
-            return message.reply('❌ Insufficient balance for this withdrawal.');
-        }
+        await getOrCreateUser(message.author.id, message.author.username);
+        await supabase.from('balances').update({ mc_username: mcUsername }).eq('user_id', message.author.id);
 
-        // Deduct balance upfront
-        await supabase.from('balances').update({ balance: user.balance - amount }).eq('user_id', message.author.id);
+        return message.reply(`✅ Successfully linked Minecraft IGN **\`${mcUsername}\`**!`);
+    }
 
-        // Record withdrawal request
-        const { data: withRecord } = await supabase
-            .from('withdrawals')
-            .insert([{ user_id: message.author.id, mc_username: mcUsername, amount, channel_id: message.channel.id, status: 'pending' }])
-            .select()
-            .single();
-
-        const withId = withRecord ? withRecord.id : 'N/A';
-
-        message.reply(`⏳ Withdrawal request submitted for **$${amount.toLocaleString()}** to IGN \`${mcUsername}\`. Admin will review and pay within 30 minutes!`);
-
-        // Send alert to Admin
-        const adminId = process.env.ADMIN_DISCORD_ID;
-        if (adminId) {
-            try {
-                const adminUser = await client.users.fetch(adminId);
-                const adminEmbed = new EmbedBuilder()
-                    .setColor('#E74C3C')
-                    .setTitle('🔔 New Withdrawal Request')
-                    .addFields(
-                        { name: 'User', value: `<@${message.author.id}>`, inline: true },
-                        { name: 'MC IGN', value: `\`${mcUsername}\``, inline: true },
-                        { name: 'Amount', value: `$${amount.toLocaleString()}`, inline: true },
-                        { name: 'Withdrawal ID', value: `#${withId}`, inline: true }
-                    )
-                    .setTimestamp();
-
-                const adminRow = new ActionRowBuilder().addComponents(
-                    new ButtonBuilder()
-                        .setCustomId(`appwith_${withId}_${message.author.id}_${mcUsername}_${amount}_${message.channel.id}`)
-                        .setLabel('Accept & Paid')
-                        .setStyle(ButtonStyle.Success),
-                    new ButtonBuilder()
-                        .setCustomId(`decwith_${withId}_${message.author.id}_${amount}`)
-                        .setLabel('Decline & Refund')
-                        .setStyle(ButtonStyle.Danger)
-                );
-
-                await adminUser.send({ embeds: [adminEmbed], components: [adminRow] });
-            } catch (err) {
-                console.error('Failed to DM Admin for withdrawal:', err);
-            }
-        }
-        return;
+    // 5. Balance Command
+    if (command === 'bal' || command === 'balance') {
+        const user = await getOrCreateUser(message.author.id, message.author.username);
+        const embed = new EmbedBuilder()
+            .setColor('#F1C40F')
+            .setTitle(`💰 ${message.author.username}'s Profile`)
+            .addFields(
+                { name: 'Balance', value: `$${user.balance.toLocaleString()}`, inline: true },
+                { name: 'Linked IGN', value: user.mc_username ? `\`${user.mc_username}\`` : 'None (`/link`)', inline: true },
+                { name: 'Rakeback', value: `$${(user.rakeback || 0).toLocaleString()}`, inline: true },
+                { name: 'Wager Left', value: `$${(user.wager_required || 0).toLocaleString()}`, inline: true }
+            );
+        return message.reply({ embeds: [embed] });
     }
 
     // 6. Deposit Command
@@ -297,7 +276,7 @@ client.on('messageCreate', async (message) => {
         const amount = parseAmount(rawAmount);
 
         if (!mcUsername || !amount || amount <= 0) {
-            return message.reply(`❌ **Usage:** \`${prefix}${command} [MC_IGN] <Amount>\` (Or use \`${prefix}link <MC_IGN>\` first)`);
+            return message.reply(`❌ **Usage:** \`${prefix}${command} [MC_IGN] <Amount>\``);
         }
 
         const { data: depRecord } = await supabase
@@ -315,8 +294,7 @@ client.on('messageCreate', async (message) => {
             .addFields(
                 { name: 'Minecraft IGN', value: `\`${mcUsername}\``, inline: true },
                 { name: 'Amount', value: `$${amount.toLocaleString()}`, inline: true }
-            )
-            .setFooter({ text: 'Click "I Paid" below once sent.' });
+            );
 
         const row = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
@@ -328,7 +306,68 @@ client.on('messageCreate', async (message) => {
         return message.reply({ embeds: [embed], components: [row] });
     }
 
-    // 7. Pay / Tip Command
+    // 7. Withdraw Command
+    if (['withdraw', 'with'].includes(command)) {
+        const rawAmount = args[0];
+        const rawMcUsername = args[1];
+        const amount = parseAmount(rawAmount);
+        const user = await getOrCreateUser(message.author.id, message.author.username);
+        const mcUsername = rawMcUsername || user.mc_username;
+
+        if (!amount || amount <= 0 || !mcUsername) {
+            return message.reply(`❌ **Usage:** \`${prefix}${command} <amount> [MC_IGN]\``);
+        }
+
+        if ((user.wager_required || 0) > 0) {
+            return message.reply(`❌ You still need to wager **$${user.wager_required.toLocaleString()}** before withdrawing.`);
+        }
+
+        if (user.balance < amount) return message.reply('❌ Insufficient balance.');
+
+        await supabase.from('balances').update({ balance: user.balance - amount }).eq('user_id', message.author.id);
+
+        const { data: withRecord } = await supabase
+            .from('withdrawals')
+            .insert([{ user_id: message.author.id, mc_username: mcUsername, amount, channel_id: message.channel.id, status: 'pending' }])
+            .select()
+            .single();
+
+        const withId = withRecord ? withRecord.id : 'N/A';
+        message.reply(`⏳ Withdrawal submitted for **$${amount.toLocaleString()}** to IGN \`${mcUsername}\`.`);
+
+        const adminId = process.env.ADMIN_DISCORD_ID;
+        if (adminId) {
+            try {
+                const adminUser = await client.users.fetch(adminId);
+                const adminEmbed = new EmbedBuilder()
+                    .setColor('#E74C3C')
+                    .setTitle('🔔 New Withdrawal Request')
+                    .addFields(
+                        { name: 'User', value: `<@${message.author.id}>`, inline: true },
+                        { name: 'MC IGN', value: `\`${mcUsername}\``, inline: true },
+                        { name: 'Amount', value: `$${amount.toLocaleString()}`, inline: true }
+                    );
+
+                const adminRow = new ActionRowBuilder().addComponents(
+                    new ButtonBuilder()
+                        .setCustomId(`appwith_${withId}_${message.author.id}_${mcUsername}_${amount}_${message.channel.id}`)
+                        .setLabel('Accept & Paid')
+                        .setStyle(ButtonStyle.Success),
+                    new ButtonBuilder()
+                        .setCustomId(`decwith_${withId}_${message.author.id}_${amount}`)
+                        .setLabel('Decline & Refund')
+                        .setStyle(ButtonStyle.Danger)
+                );
+
+                await adminUser.send({ embeds: [adminEmbed], components: [adminRow] });
+            } catch (err) {
+                console.error(err);
+            }
+        }
+        return;
+    }
+
+    // 8. Pay / Tip Command
     if (['pay', 'tip'].includes(command)) {
         let recipientUser = message.mentions.users.first();
         let amountArg = args[1];
@@ -338,22 +377,15 @@ client.on('messageCreate', async (message) => {
                 const referencedMsg = await message.channel.messages.fetch(message.reference.messageId);
                 recipientUser = referencedMsg.author;
                 amountArg = args[0];
-            } catch (err) {
-                console.error(err);
-            }
+            } catch (err) { console.error(err); }
         }
 
         const amount = parseAmount(amountArg);
-
-        if (!recipientUser || !amount || amount <= 0) {
-            return message.reply(`❌ **Usage:** \`${prefix}${command} @user <amount>\` or reply to a message with \`${prefix}${command} <amount>\``);
-        }
-
-        if (recipientUser.id === message.author.id) return message.reply('❌ You cannot tip yourself!');
-        if (recipientUser.bot) return message.reply('❌ You cannot tip bot accounts.');
+        if (!recipientUser || !amount || amount <= 0) return message.reply(`❌ **Usage:** \`${prefix}${command} @user <amount>\``);
+        if (recipientUser.id === message.author.id || recipientUser.bot) return message.reply('❌ Invalid target user.');
 
         const sender = await getOrCreateUser(message.author.id, message.author.username);
-        if (sender.balance < amount) return message.reply('❌ Insufficient balance for this tip.');
+        if (sender.balance < amount) return message.reply('❌ Insufficient balance.');
 
         const recipient = await getOrCreateUser(recipientUser.id, recipientUser.username);
 
@@ -363,53 +395,37 @@ client.on('messageCreate', async (message) => {
             wager_required: (recipient.wager_required || 0) + amount
         }).eq('user_id', recipientUser.id);
 
-        const embed = new EmbedBuilder()
-            .setColor('#2ECC71')
-            .setTitle('💸 Tip Sent!')
-            .setDescription(`**${message.author.username}** sent **$${amount.toLocaleString()}** to **${recipientUser.username}**!`);
-
-        return message.reply({ embeds: [embed] });
+        return message.reply(`💸 **${message.author.username}** sent **$${amount.toLocaleString()}** to **${recipientUser.username}**!`);
     }
 
-    // 8. Rakeback Command
+    // 9. Rakeback Command
     if (command === 'rakeback') {
         const user = await getOrCreateUser(message.author.id, message.author.username);
         const subCommand = args[0] ? args[0].toLowerCase() : '';
 
         if (subCommand === 'claim') {
             const amountToClaim = user.rakeback || 0;
-            if (amountToClaim <= 0) return message.reply('❌ You have no rakeback balance to claim.');
+            if (amountToClaim <= 0) return message.reply('❌ No rakeback to claim.');
 
-            await supabase.from('balances').update({
-                balance: user.balance + amountToClaim,
-                rakeback: 0
-            }).eq('user_id', message.author.id);
-
-            return message.reply(`🎉 Claimed **$${amountToClaim.toLocaleString()}** from rakeback into your balance!`);
+            await supabase.from('balances').update({ balance: user.balance + amountToClaim, rakeback: 0 }).eq('user_id', message.author.id);
+            return message.reply(`🎉 Claimed **$${amountToClaim.toLocaleString()}** rakeback!`);
         }
 
         const embed = new EmbedBuilder()
             .setColor('#E67E22')
             .setTitle('🎰 Rakeback Overview')
-            .setDescription(`Unclaimed Rakeback: **$${(user.rakeback || 0).toLocaleString()}**\n\nRun \`${prefix}rakeback claim\` to add to balance.`);
+            .setDescription(`Unclaimed Rakeback: **$${(user.rakeback || 0).toLocaleString()}**\nUse \`${prefix}rakeback claim\` to claim.`);
         return message.reply({ embeds: [embed] });
     }
 
-    // 9. Wager Status Command
+    // 10. Wager Command
     if (command === 'wager') {
         const user = await getOrCreateUser(message.author.id, message.author.username);
         const wagerLeft = user.wager_required || 0;
-
-        const embed = new EmbedBuilder()
-            .setColor('#9B59B6')
-            .setTitle('📊 Wagering Status')
-            .setDescription(wagerLeft > 0 
-                ? `You need to wager **$${wagerLeft.toLocaleString()}** more before withdrawing.` 
-                : '✅ You have completed all wagering requirements!');
-        return message.reply({ embeds: [embed] });
+        return message.reply(wagerLeft > 0 ? `📊 Remaining wager required: **$${wagerLeft.toLocaleString()}**` : '✅ All wagering requirements completed!');
     }
 
-    // 10. Limbo (Strict Custom Table Implementation)
+    // 11. Limbo Command (Win Chance Hidden)
     if (command === 'limbo') {
         const rawAmount = args[0];
         const rawTarget = args[1] ? args[1].replace('x', '') : null;
@@ -421,13 +437,9 @@ client.on('messageCreate', async (message) => {
         }
 
         const user = await getOrCreateUser(message.author.id, message.author.username);
-        if (user.balance < betAmount) {
-            return message.reply('❌ Insufficient balance.');
-        }
+        if (user.balance < betAmount) return message.reply('❌ Insufficient balance.');
 
-        // Exact Table-Based Range Lookup
         let minRate, maxRate;
-
         if (targetMult >= 1.01 && targetMult <= 1.10) { minRate = 81.82; maxRate = 89.11; }
         else if (targetMult >= 1.11 && targetMult <= 1.20) { minRate = 75.00; maxRate = 81.08; }
         else if (targetMult >= 1.21 && targetMult <= 1.50) { minRate = 60.00; maxRate = 74.38; }
@@ -441,7 +453,7 @@ client.on('messageCreate', async (message) => {
         else if (targetMult >= 10.01 && targetMult <= 20.00) { minRate = 4.50; maxRate = 8.99; }
         else if (targetMult >= 20.01 && targetMult <= 50.00) { minRate = 1.80; maxRate = 4.50; }
         else if (targetMult >= 50.01 && targetMult <= 100.00) { minRate = 0.90; maxRate = 1.80; }
-        else { minRate = 0.01; maxRate = 0.89; } // 100x+
+        else { minRate = 0.01; maxRate = 0.89; }
 
         const winPercentage = minRate + (Math.random() * (maxRate - minRate));
         const roll = Math.random() * 100;
@@ -462,6 +474,7 @@ client.on('messageCreate', async (message) => {
         await supabase.from('balances').update({ balance: newBalance }).eq('user_id', message.author.id);
         await processBet(user, betAmount);
 
+        // Limbo Embed without Win Chance Field
         const embed = new EmbedBuilder()
             .setColor(isWin ? '#2ECC71' : '#E74C3C')
             .setTitle(`🚀 Limbo | Result: ${finalMultiplier}x`)
@@ -470,14 +483,13 @@ client.on('messageCreate', async (message) => {
                 : `💥 **Crashed at ${finalMultiplier}x!** You lost $${betAmount.toLocaleString()}.`)
             .addFields(
                 { name: 'Target', value: `${targetMult}x`, inline: true },
-                { name: 'Win Chance', value: `${winPercentage.toFixed(2)}%`, inline: true },
                 { name: 'New Balance', value: `$${newBalance.toLocaleString()}`, inline: true }
             );
 
         return message.reply({ embeds: [embed] });
     }
 
-    // 11. Coinflip
+    // 12. Coinflip Command
     if (['cf', 'coin', 'flip'].includes(command)) {
         const rawAmount = args[0];
         const choiceInput = args[1] ? args[1].toLowerCase() : null;
@@ -520,76 +532,100 @@ client.on('messageCreate', async (message) => {
 
         return replyMsg.edit({ content: ' ', embeds: [embed] });
     }
-
-    // 12. Game Win Rate Control Panel (DM Only)
-    if (command === 'win') {
-        if (!message.channel.isDMBased()) return message.reply('❌ Admin DM only command.');
-        if (!isAdmin) return message.reply('❌ Unauthorized.');
-
-        const gameSelectMenu = new StringSelectMenuBuilder()
-            .setCustomId('select_game_for_winrate')
-            .setPlaceholder('Step 1: Select a Game')
-            .addOptions([
-                { label: 'Coinflip', value: 'coinflip' }
-            ]);
-
-        const row = new ActionRowBuilder().addComponents(gameSelectMenu);
-        return message.reply({ content: '⚙️ **Win Rate Control Panel**\nStep 1: Choose which game you want to modify:', components: [row] });
-    }
 });
 
-// Select Menu & Button Handlers
+// Interaction Handlers (Buttons)
 client.on('interactionCreate', async (interaction) => {
-    if (interaction.isStringSelectMenu()) {
-        if (interaction.customId === 'select_game_for_winrate') {
-            const selectedGame = interaction.values[0];
-
-            const rateOptions = [
-                { label: 'Default (45% Win Rate)', value: 'reset' },
-                { label: 'Custom (Set via command)', value: 'custom' }
-            ];
-
-            for (let i = 0; i <= 100; i += 5) {
-                rateOptions.push({
-                    label: `${i}\% Win Rate${i === 0 ? ' (Always Lose)' : i === 100 ? ' (Always Win)' : ''}`,
-                    value: i.toString()
-                });
-            }
-
-            const rateSelectMenu = new StringSelectMenuBuilder()
-                .setCustomId(`set_winrate_percent_${selectedGame}`)
-                .setPlaceholder(`Step 2: Set Win Rate % for ${selectedGame.toUpperCase()}`)
-                .addOptions(rateOptions);
-
-            const row = new ActionRowBuilder().addComponents(rateSelectMenu);
-            return interaction.reply({
-                content: `⚙️ **Setting Win Rate for ${selectedGame.toUpperCase()}**\nStep 2: Select desired win percentage:`,
-                components: [row]
-            });
-        }
-
-        if (interaction.customId.startsWith('set_winrate_percent_')) {
-            const game = interaction.customId.replace('set_winrate_percent_', '');
-            const rateVal = interaction.values[0];
-
-            if (rateVal === 'custom') {
-                return interaction.reply({
-                    content: `To set a custom win rate (e.g. 47%), send this command here in DM:\n\`!setgamewinrate ${game} 47\``
-                });
-            }
-
-            const rate = rateVal === 'reset' ? null : parseInt(rateVal);
-            await supabase.from('game_settings').upsert({ game_name: game, win_rate: rate });
-
-            return interaction.reply({
-                content: `✅ Updated **${game.toUpperCase()}** global win rate to **${rate !== null ? rate + '%' : 'Default (45%)'}**!`
-            });
-        }
-    }
-
     if (!interaction.isButton()) return;
 
-    // Withdrawal Processing Buttons
+    // Claim Referral Rewards Button
+    if (interaction.customId.startsWith('claim_ref_')) {
+        const targetUserId = interaction.customId.replace('claim_ref_', '');
+        if (interaction.user.id !== targetUserId) {
+            return interaction.reply({ content: '❌ You cannot claim someone else\'s referral rewards!', ephemeral: true });
+        }
+
+        const user = await getOrCreateUser(interaction.user.id, interaction.user.username);
+        const pendingReward = user.unclaimed_ref_rewards || 0;
+
+        if (pendingReward <= 0) {
+            return interaction.reply({ content: '❌ You have no pending referral rewards to claim.', ephemeral: true });
+        }
+
+        const newBalance = user.balance + pendingReward;
+        const totalEarnings = (user.total_ref_earnings || 0) + pendingReward;
+
+        await supabase.from('balances').update({
+            balance: newBalance,
+            unclaimed_ref_rewards: 0,
+            total_ref_earnings: totalEarnings
+        }).eq('user_id', interaction.user.id);
+
+        return interaction.reply({
+            content: `🎉 Successfully claimed **$${pendingReward.toLocaleString()}** in referral rewards! Your new balance is **$${newBalance.toLocaleString()}**.`
+        });
+    }
+
+    // Deposit Approval Button
+    if (interaction.customId.startsWith('approve_')) {
+        const [, depositId, userId, amount] = interaction.customId.split('_');
+        const depositAmount = parseInt(amount);
+
+        await supabase.from('deposits').update({ status: 'completed' }).eq('id', depositId);
+
+        const user = await getOrCreateUser(userId, 'User');
+        const newBalance = user.balance + depositAmount;
+        const newWager = (user.wager_required || 0) + depositAmount;
+
+        await supabase.from('balances').update({ balance: newBalance, wager_required: newWager }).eq('user_id', userId);
+
+        // Check for qualifying referral deposit ($15M or more)
+        if (depositAmount >= 15000000 && user.referred_by) {
+            const referrerId = user.referred_by;
+
+            const { data: refRecord } = await supabase
+                .from('referrals')
+                .select('*')
+                .eq('referrer_id', referrerId)
+                .eq('referred_id', userId)
+                .single();
+
+            if (refRecord && !refRecord.qualifying_deposit_done) {
+                await supabase.from('referrals').update({ qualifying_deposit_done: true }).eq('id', refRecord.id);
+
+                const { data: referrer } = await supabase.from('balances').select('*').eq('user_id', referrerId).single();
+                if (referrer) {
+                    const currentPending = referrer.unclaimed_ref_rewards || 0;
+                    await supabase.from('balances').update({
+                        unclaimed_ref_rewards: currentPending + 30000000
+                    }).eq('user_id', referrerId);
+
+                    try {
+                        const referrerUser = await client.users.fetch(referrerId);
+                        if (referrerUser) {
+                            await referrerUser.send(`🎉 **Referral Bonus Earned!** Your referral <@${userId}> deposited **$${depositAmount.toLocaleString()}** (more than $15M)! You earned **$30,000,000**. Claim it using \`/ref\` or \`/refer\`.`);
+                        }
+                    } catch (err) {
+                        console.error('Could not DM referrer on deposit reward:', err);
+                    }
+                }
+            }
+        }
+
+        await interaction.update({
+            content: `✅ **Accepted Deposit #${depositId}** for <@${userId}> ($${depositAmount.toLocaleString()}).`,
+            embeds: [],
+            components: []
+        });
+    }
+
+    if (interaction.customId.startsWith('decline_')) {
+        const [, depositId, userId] = interaction.customId.split('_');
+        await supabase.from('deposits').update({ status: 'declined' }).eq('id', depositId);
+        await interaction.update({ content: `❌ **Declined Deposit #${depositId}** for <@${userId}>.`, embeds: [], components: [] });
+    }
+
+    // Withdrawal Approval Buttons
     if (interaction.customId.startsWith('appwith_')) {
         const [, withId, userId, mcUsername, amount, channelId] = interaction.customId.split('_');
         const withAmount = parseInt(amount);
@@ -604,27 +640,15 @@ client.on('interactionCreate', async (interaction) => {
 
         try {
             const targetUser = await client.users.fetch(userId);
-            const userEmbed = new EmbedBuilder()
-                .setColor('#2ECC71')
-                .setTitle('🎉 Withdrawal Sent!')
-                .setDescription(`Your withdrawal of **$${withAmount.toLocaleString()}** to Minecraft IGN \`${mcUsername}\` has been processed and paid!`);
-            await targetUser.send({ embeds: [userEmbed] });
-        } catch (err) {
-            console.error('Could not DM user regarding withdrawal:', err);
-        }
+            await targetUser.send(`🎉 Your withdrawal of **$${withAmount.toLocaleString()}** to IGN \`${mcUsername}\` has been processed!`);
+        } catch (err) { console.error(err); }
 
         try {
             const playChannel = await client.channels.fetch(channelId);
             if (playChannel) {
-                const publicEmbed = new EmbedBuilder()
-                    .setColor('#2ECC71')
-                    .setTitle('💸 Successful Withdrawal')
-                    .setDescription(`User **<@${userId}>** received **$${withAmount.toLocaleString()}** withdrawal to IGN \`${mcUsername}\`!`);
-                await playChannel.send({ embeds: [publicEmbed] });
+                await playChannel.send(`💸 User **<@${userId}>** received **$${withAmount.toLocaleString()}** withdrawal to IGN \`${mcUsername}\`!`);
             }
-        } catch (err) {
-            console.error('Could not post public withdrawal notice:', err);
-        }
+        } catch (err) { console.error(err); }
     }
 
     if (interaction.customId.startsWith('decwith_')) {
@@ -632,86 +656,11 @@ client.on('interactionCreate', async (interaction) => {
         const withAmount = parseInt(amount);
 
         await supabase.from('withdrawals').update({ status: 'declined' }).eq('id', withId);
-
         const user = await getOrCreateUser(userId, 'User');
         await supabase.from('balances').update({ balance: user.balance + withAmount }).eq('user_id', userId);
 
         await interaction.update({
-            content: `❌ **Declined Withdrawal #${withId}**. Refunded **$${withAmount.toLocaleString()}** back to <@${userId}>.`,
-            embeds: [],
-            components: []
-        });
-
-        try {
-            const targetUser = await client.users.fetch(userId);
-            await targetUser.send(`❌ Your withdrawal request of **$${withAmount.toLocaleString()}** was declined. The funds have been returned to your balance.`);
-        } catch (err) {
-            console.error('Could not DM user regarding declined withdrawal:', err);
-        }
-    }
-
-    // Deposit Processing Buttons
-    if (interaction.customId.startsWith('paid_')) {
-        const [, depositId, userId, mcUsername, amount] = interaction.customId.split('_');
-        await interaction.reply({ content: '✅ Confirmation sent to Admin!', ephemeral: true });
-
-        const adminId = process.env.ADMIN_DISCORD_ID;
-        if (adminId) {
-            try {
-                const adminUser = await client.users.fetch(adminId);
-                const adminEmbed = new EmbedBuilder()
-                    .setColor('#F39C12')
-                    .setTitle('🔔 New Deposit Verification Needed')
-                    .addFields(
-                        { name: 'User', value: `<@${userId}>`, inline: true },
-                        { name: 'MC IGN', value: `\`${mcUsername}\``, inline: true },
-                        { name: 'Amount', value: `$${parseInt(amount).toLocaleString()}`, inline: true },
-                        { name: 'Deposit ID', value: `#${depositId}`, inline: true }
-                    );
-
-                const adminRow = new ActionRowBuilder().addComponents(
-                    new ButtonBuilder()
-                        .setCustomId(`approve_${depositId}_${userId}_${amount}`)
-                        .setLabel('Accept')
-                        .setStyle(ButtonStyle.Success),
-                    new ButtonBuilder()
-                        .setCustomId(`decline_${depositId}_${userId}_${amount}`)
-                        .setLabel('Decline')
-                        .setStyle(ButtonStyle.Danger)
-                );
-
-                await adminUser.send({ embeds: [adminEmbed], components: [adminRow] });
-            } catch (err) {
-                console.error('Failed to DM Admin:', err);
-            }
-        }
-    }
-
-    if (interaction.customId.startsWith('approve_')) {
-        const [, depositId, userId, amount] = interaction.customId.split('_');
-        const depositAmount = parseInt(amount);
-
-        await supabase.from('deposits').update({ status: 'completed' }).eq('id', depositId);
-
-        const user = await getOrCreateUser(userId, 'User');
-        const newBalance = user.balance + depositAmount;
-        const newWager = (user.wager_required || 0) + depositAmount;
-
-        await supabase.from('balances').update({ balance: newBalance, wager_required: newWager }).eq('user_id', userId);
-
-        await interaction.update({
-            content: `✅ **Accepted Deposit #${depositId}** for <@${userId}> ($${depositAmount.toLocaleString()}). Balance & Wager updated!`,
-            embeds: [],
-            components: []
-        });
-    }
-
-    if (interaction.customId.startsWith('decline_')) {
-        const [, depositId, userId] = interaction.customId.split('_');
-        await supabase.from('deposits').update({ status: 'declined' }).eq('id', depositId);
-
-        await interaction.update({
-            content: `❌ **Declined Deposit #${depositId}** for <@${userId}>.`,
+            content: `❌ **Declined Withdrawal #${withId}**. Refunded **$${withAmount.toLocaleString()}** to <@${userId}>.`,
             embeds: [],
             components: []
         });
@@ -719,6 +668,4 @@ client.on('interactionCreate', async (interaction) => {
 });
 
 console.log('Initiating connection to Discord...');
-client.login(process.env.DISCORD_TOKEN).catch(err => {
-    console.error('❌ DISCORD LOGIN FAILED:', err.message);
-});
+client.login(process.env.DISCORD_TOKEN).catch(err => console.error('❌ DISCORD LOGIN FAILED:', err.message));
