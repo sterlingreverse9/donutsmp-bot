@@ -22,6 +22,7 @@ const PORT = process.env.PORT || 10000;
 app.get('/', (req, res) => res.send('Donut Bet Bot is live!'));
 app.listen(PORT, () => console.log(`HTTP server running on port ${PORT}`));
 
+// Keep alive self-ping
 setInterval(() => {
     http.get(`http://localhost:${PORT}`).on('error', () => {});
 }, 5 * 60 * 1000);
@@ -41,20 +42,26 @@ const client = new Client({
 
 const ALLOWED_PREFIXES = ['!', '$', '/', '.'];
 
-client.once('ready', () => {
+client.once('clientReady', () => {
     console.log(`🤖 SUCCESS: Bot connected as ${client.user.tag}!`);
 });
 
 client.on('messageCreate', async (message) => {
+    // 1. Raw Event Diagnostic Logging
+    console.log(`[RAW MESSAGE] Author: ${message.author.tag} | Bot: ${message.author.bot} | Content: "${message.content}"`);
+
     if (message.author.bot) return;
 
     const prefix = ALLOWED_PREFIXES.find(p => message.content.startsWith(p));
-    if (!prefix) return;
+    if (!prefix) {
+        console.log(`[PREFIX CHECK FAILED] Message does not start with valid prefix: "${message.content}"`);
+        return;
+    }
 
     const args = message.content.slice(prefix.length).trim().split(/ +/);
     const command = args.shift().toLowerCase();
 
-    console.log(`📩 Processing command "${command}" from ${message.author.tag}`);
+    console.log(`[EXECUTING COMMAND] Name: "${command}" | Args:`, args);
 
     try {
         let handled = false;
@@ -69,6 +76,17 @@ client.on('messageCreate', async (message) => {
         }
     } catch (err) {
         console.error(`❌ Error executing command '${command}':`, err);
+        message.reply('❌ An internal error occurred while processing that command.').catch(() => {});
+    }
+});
+
+client.on('interactionCreate', async (interaction) => {
+    if (handleInteractions) {
+        try {
+            await handleInteractions(interaction, client);
+        } catch (err) {
+            console.error('❌ Interaction Error:', err);
+        }
     }
 });
 
