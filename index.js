@@ -2,12 +2,22 @@ const express = require('express');
 const http = require('http');
 const { Client, GatewayIntentBits, Partials } = require('discord.js');
 
-// Import Command Handlers
-const { handleAdminCommands } = require('./commands/admin');
-const { handleBankingCommands } = require('./commands/banking');
-const { handleGameCommands } = require('./commands/games');
-const { handleGeneralCommands } = require('./commands/general');
-const { handleInteractions } = require('./handlers/interactions');
+// Helper function to safely load required modules without crashing the node process
+function safeRequire(filePath) {
+    try {
+        return require(filePath);
+    } catch (err) {
+        console.error(`❌ FAILED TO LOAD MODULE (${filePath}):`, err.message);
+        return {};
+    }
+}
+
+// Import Command Handlers from sub-files
+const { handleAdminCommands } = safeRequire('./commands/admin');
+const { handleBankingCommands } = safeRequire('./commands/banking');
+const { handleGameCommands } = safeRequire('./commands/games');
+const { handleGeneralCommands } = safeRequire('./commands/general');
+const { handleInteractions } = safeRequire('./handlers/interactions');
 
 const app = express();
 const PORT = process.env.PORT || 10000;
@@ -15,11 +25,14 @@ const PORT = process.env.PORT || 10000;
 app.get('/', (req, res) => res.send('Donut Bet Bot is live!'));
 app.listen(PORT, () => console.log(`HTTP server listening on port ${PORT}`));
 
-// Keep-Alive Ping
+// Keep-Alive Self Ping for Render
 setInterval(() => {
-    http.get(`http://localhost:${PORT}`).on('error', (err) => console.error(err.message));
+    http.get(`http://localhost:${PORT}`).on('error', (err) => {
+        // Ignore ping errors
+    });
 }, 5 * 60 * 1000);
 
+// Global Error Listeners to prevent silent crashes
 process.on('unhandledRejection', (reason, promise) => {
     console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
 });
@@ -28,9 +41,9 @@ process.on('uncaughtException', (err) => {
     console.error('❌ Uncaught Exception:', err);
 });
 
-// Environment Variable Check
-if (!process.env.DISCORD_TOKEN) console.error('⚠️ WARNING: DISCORD_TOKEN is missing!');
-if (!process.env.ADMIN_DISCORD_ID) console.error('⚠️ WARNING: ADMIN_DISCORD_ID is missing!');
+// Environment Variable Guard Checks
+if (!process.env.DISCORD_TOKEN) console.error('⚠️ WARNING: DISCORD_TOKEN is missing in environment variables!');
+if (!process.env.ADMIN_DISCORD_ID) console.error('⚠️ WARNING: ADMIN_DISCORD_ID is missing in environment variables!');
 
 const client = new Client({
     intents: [
@@ -59,19 +72,29 @@ client.on('messageCreate', async (message) => {
     const args = message.content.slice(prefix.length).trim().split(/ +/);
     const command = args.shift().toLowerCase();
 
-    // Cascading execution across modules
-    const handled = 
-        await handleAdminCommands(command, args, message, prefix) ||
-        await handleBankingCommands(command, args, message, prefix) ||
-        await handleGameCommands(command, args, message, prefix) ||
-        await handleGeneralCommands(command, args, message, prefix);
+    try {
+        // Cascading execution across modules
+        if (handleAdminCommands && await handleAdminCommands(command, args, message, prefix)) return;
+        if (handleBankingCommands && await handleBankingCommands(command, args, message, prefix)) return;
+        if (handleGameCommands && await handleGameCommands(command, args, message, prefix)) return;
+        if (handleGeneralCommands && await handleGeneralCommands(command, args, message, prefix)) return;
+    } catch (err) {
+        console.error(`❌ Error executing command '${command}':`, err);
+        message.reply('❌ An internal error occurred while executing that command.').catch(() => {});
+    }
 });
 
 client.on('interactionCreate', async (interaction) => {
-    await handleInteractions(interaction, client);
+    if (handleInteractions) {
+        try {
+            await handleInteractions(interaction, client);
+        } catch (err) {
+            console.error('❌ Interaction Error:', err);
+        }
+    }
 });
 
-// Discord Authentication Call
+// Explicit Discord Authentication Attempt
 if (!process.env.DISCORD_TOKEN) {
     console.error('❌ DISCORD LOGIN SKIPPED: Missing DISCORD_TOKEN environment variable.');
 } else {
