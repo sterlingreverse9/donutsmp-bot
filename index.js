@@ -89,6 +89,24 @@ async function getOrCreateUser(userId, username) {
     return data;
 }
 
+// Helper to locate target user by @mention, Discord ID, or saved username
+async function findTargetUser(input, mention) {
+    if (mention) {
+        return await getOrCreateUser(mention.id, mention.username);
+    }
+    if (!input) return null;
+
+    const cleanInput = input.replace(/[<@!>]/g, '').trim();
+
+    // Check by Discord User ID
+    let { data } = await supabase.from('balances').select('*').eq('user_id', cleanInput).single();
+    if (data) return data;
+
+    // Check by saved username
+    let { data: nameData } = await supabase.from('balances').select('*').ilike('username', cleanInput).single();
+    return nameData || null;
+}
+
 // Detection & Adjustment for Martingale Strategy
 async function evaluateMartingaleAndGetWinRate(user, betAmount, baseWinRate) {
     let streak = user.martingale_streak || 0;
@@ -153,6 +171,48 @@ client.on('messageCreate', async (message) => {
     const command = args.shift().toLowerCase();
     const isAdmin = message.author.id === process.env.ADMIN_DISCORD_ID;
 
+    // ADMIN COMMAND: /add <username/@user/id> <amount>
+    if (command === 'add') {
+        if (!isAdmin) return message.reply('❌ Admin access required.');
+
+        const targetInput = args[0];
+        const rawAmount = args[1];
+        const amount = parseAmount(rawAmount);
+
+        if (!targetInput || !amount || amount <= 0) {
+            return message.reply(`❌ **Usage:** \`${prefix}add <@user/username/userID> <amount>\` (e.g. \`${prefix}add @username 1m\`)`);
+        }
+
+        const targetUser = await findTargetUser(targetInput, message.mentions.users.first());
+        if (!targetUser) return message.reply(`❌ User \`${targetInput}\` not found in database.`);
+
+        const newBal = (targetUser.balance || 0) + amount;
+        await supabase.from('balances').update({ balance: newBal }).eq('user_id', targetUser.user_id);
+
+        return message.reply(`✅ Added **$${amount.toLocaleString()}** to **${targetUser.username || targetUser.user_id}**! New Balance: **$${newBal.toLocaleString()}**`);
+    }
+
+    // ADMIN COMMAND: /deduct <username/@user/id> <amount>
+    if (['deduct', 'remove', 'sub'].includes(command)) {
+        if (!isAdmin) return message.reply('❌ Admin access required.');
+
+        const targetInput = args[0];
+        const rawAmount = args[1];
+        const amount = parseAmount(rawAmount);
+
+        if (!targetInput || !amount || amount <= 0) {
+            return message.reply(`❌ **Usage:** \`${prefix}deduct <@user/username/userID> <amount>\` (e.g. \`${prefix}deduct @username 500k\`)`);
+        }
+
+        const targetUser = await findTargetUser(targetInput, message.mentions.users.first());
+        if (!targetUser) return message.reply(`❌ User \`${targetInput}\` not found in database.`);
+
+        const newBal = Math.max(0, (targetUser.balance || 0) - amount);
+        await supabase.from('balances').update({ balance: newBal }).eq('user_id', targetUser.user_id);
+
+        return message.reply(`💸 Deducted **$${amount.toLocaleString()}** from **${targetUser.username || targetUser.user_id}**! New Balance: **$${newBal.toLocaleString()}**`);
+    }
+
     // 1. Admin Win Rate Control Panel (!win)
     if (command === 'win') {
         if (!isAdmin) return message.reply('❌ You do not have permission to use this command.');
@@ -212,6 +272,10 @@ client.on('messageCreate', async (message) => {
                 { name: '📥 Banking', value: '`/depo [IGN] <Amount>` - Deposit request\n`/withdraw <Amount> [IGN]` - Withdrawal request' },
                 { name: '🎲 Games', value: '`/limbo <Amount> <Multiplier>` - Limbo game (Max 100x)\n`/cf <Amount> <heads/tails>` - Coinflip game' }
             );
+
+        if (isAdmin) {
+            embed.addFields({ name: '⚡ Admin Commands', value: '`/add <user> <amount>` - Add balance\n`/deduct <user> <amount>` - Deduct balance\n`/win` - Set coinflip rate\n`/setwin coinflip <rate>` - Custom win rate' });
+        }
 
         return message.reply({ embeds: [embed] });
     }
@@ -352,7 +416,7 @@ client.on('messageCreate', async (message) => {
         return message.reply({ embeds: [embed] });
     }
 
-    // 8. Deposit Command (FIXED: Public receipt in channel, Approval sent to Admin DM)
+    // 8. Deposit Command
     if (['deposit', 'depo', 'd'].includes(command)) {
         let mcUsername = args[0];
         let rawAmount = args[1];
@@ -377,7 +441,6 @@ client.on('messageCreate', async (message) => {
 
         const depositId = depRecord ? depRecord.id : 'N/A';
 
-        // Public notice in channel (no buttons)
         const publicEmbed = new EmbedBuilder()
             .setColor('#2ECC71')
             .setTitle('📥 Deposit Request Submitted')
@@ -389,7 +452,6 @@ client.on('messageCreate', async (message) => {
 
         message.reply({ embeds: [publicEmbed] });
 
-        // Private notification to Admin DM with approve/decline buttons
         const adminId = process.env.ADMIN_DISCORD_ID;
         if (adminId) {
             try {
@@ -506,7 +568,6 @@ client.on('messageCreate', async (message) => {
 
         await supabase.from('balances').update({ balance: sender.balance - amount }).eq('user_id', message.author.id);
 
-        // 1x wager assigned on tipped amount
         await supabase.from('balances').update({ 
             balance: recipient.balance + amount,
             wager_required: (recipient.wager_required || 0) + amount
@@ -769,7 +830,6 @@ client.on('interactionCreate', async (interaction) => {
             components: []
         });
 
-        // Notify user in public channel
         if (channelId) {
             try {
                 const channel = await client.channels.fetch(channelId);
