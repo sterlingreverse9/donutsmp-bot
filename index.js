@@ -352,7 +352,7 @@ client.on('messageCreate', async (message) => {
         return message.reply({ embeds: [embed] });
     }
 
-    // 8. Deposit Command
+    // 8. Deposit Command (FIXED: Public receipt in channel, Approval sent to Admin DM)
     if (['deposit', 'depo', 'd'].includes(command)) {
         let mcUsername = args[0];
         let rawAmount = args[1];
@@ -377,27 +377,50 @@ client.on('messageCreate', async (message) => {
 
         const depositId = depRecord ? depRecord.id : 'N/A';
 
-        const embed = new EmbedBuilder()
+        // Public notice in channel (no buttons)
+        const publicEmbed = new EmbedBuilder()
             .setColor('#2ECC71')
-            .setTitle('📥 Deposit Request')
-            .setDescription(`Send **$${amount.toLocaleString()}** in-game to complete your deposit.`)
+            .setTitle('📥 Deposit Request Submitted')
+            .setDescription(`Send **$${amount.toLocaleString()}** in-game. An admin will verify and approve your deposit.`)
             .addFields(
                 { name: 'Minecraft IGN', value: `\`${mcUsername}\``, inline: true },
                 { name: 'Amount', value: `$${amount.toLocaleString()}`, inline: true }
             );
 
-        const row = new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-                .setCustomId(`approve_${depositId}_${message.author.id}_${amount}`)
-                .setLabel('Approve')
-                .setStyle(ButtonStyle.Success),
-            new ButtonBuilder()
-                .setCustomId(`decline_${depositId}_${message.author.id}`)
-                .setLabel('Decline')
-                .setStyle(ButtonStyle.Danger)
-        );
+        message.reply({ embeds: [publicEmbed] });
 
-        return message.reply({ embeds: [embed], components: [row] });
+        // Private notification to Admin DM with approve/decline buttons
+        const adminId = process.env.ADMIN_DISCORD_ID;
+        if (adminId) {
+            try {
+                const adminUser = await client.users.fetch(adminId);
+                const adminEmbed = new EmbedBuilder()
+                    .setColor('#2ECC71')
+                    .setTitle('🔔 New Deposit Request')
+                    .addFields(
+                        { name: 'User', value: `<@${message.author.id}> (${message.author.username})`, inline: true },
+                        { name: 'MC IGN', value: `\`${mcUsername}\``, inline: true },
+                        { name: 'Amount', value: `$${amount.toLocaleString()}`, inline: true },
+                        { name: 'Channel', value: `<#${message.channel.id}>`, inline: true }
+                    );
+
+                const adminRow = new ActionRowBuilder().addComponents(
+                    new ButtonBuilder()
+                        .setCustomId(`approve_${depositId}_${message.author.id}_${amount}_${message.channel.id}`)
+                        .setLabel('Approve & Credit')
+                        .setStyle(ButtonStyle.Success),
+                    new ButtonBuilder()
+                        .setCustomId(`decline_${depositId}_${message.author.id}_${message.channel.id}`)
+                        .setLabel('Decline')
+                        .setStyle(ButtonStyle.Danger)
+                );
+
+                await adminUser.send({ embeds: [adminEmbed], components: [adminRow] });
+            } catch (err) {
+                console.error('Failed to DM admin for deposit:', err);
+            }
+        }
+        return;
     }
 
     // 9. Withdraw Command
@@ -448,7 +471,7 @@ client.on('messageCreate', async (message) => {
                         .setLabel('Accept & Paid')
                         .setStyle(ButtonStyle.Success),
                     new ButtonBuilder()
-                        .setCustomId(`decwith_${withId}_${message.author.id}_${amount}`)
+                        .setCustomId(`decwith_${withId}_${message.author.id}_${amount}_${message.channel.id}`)
                         .setLabel('Decline & Refund')
                         .setStyle(ButtonStyle.Danger)
                 );
@@ -526,7 +549,6 @@ client.on('messageCreate', async (message) => {
         const betAmount = parseAmount(rawAmount);
         const targetMult = parseFloat(rawTarget);
 
-        // Cap multiplier between 1.01x and 100x
         if (!betAmount || !targetMult || targetMult < 1.01 || targetMult > 100) {
             return message.reply(`❌ **Usage:** \`${prefix}limbo <amount> <multiplier>\` (Multiplier must be between 1.01x and 100x)`);
         }
@@ -558,11 +580,8 @@ client.on('messageCreate', async (message) => {
 
         let finalMultiplier;
         if (isWin) {
-            // Wins land slightly above or equal to target
             finalMultiplier = (targetMult + (Math.random() * 0.15)).toFixed(2);
         } else {
-            // Realistic casino crash distribution: power curve capped just below targetMult
-            // Most crashes happen between 1.00x and 3.00x
             const rawCrash = 1.00 + (1 / (Math.random() * 0.9 + 0.1) - 1);
             const cappedCrash = Math.min(rawCrash, targetMult - 0.01);
             finalMultiplier = Math.max(1.00, cappedCrash).toFixed(2);
@@ -666,6 +685,13 @@ client.on('interactionCreate', async (interaction) => {
 
     if (!interaction.isButton()) return;
 
+    // Strict Admin authorization check for Admin action buttons
+    const isAdminButton = ['approve_', 'decline_', 'appwith_', 'decwith_'].some(prefix => interaction.customId.startsWith(prefix));
+    if (isAdminButton && interaction.user.id !== process.env.ADMIN_DISCORD_ID) {
+        return interaction.reply({ content: '❌ Only the admin can perform this action.', ephemeral: true });
+    }
+
+    // 1. Referral Claiming
     if (interaction.customId.startsWith('claim_ref_')) {
         const targetUserId = interaction.customId.replace('claim_ref_', '');
         if (interaction.user.id !== targetUserId) {
@@ -693,8 +719,9 @@ client.on('interactionCreate', async (interaction) => {
         });
     }
 
+    // 2. Deposit Approval (Admin DM)
     if (interaction.customId.startsWith('approve_')) {
-        const [, depositId, userId, amount] = interaction.customId.split('_');
+        const [, depositId, userId, amount, channelId] = interaction.customId.split('_');
         const depositAmount = parseInt(amount);
 
         await supabase.from('deposits').update({ status: 'completed' }).eq('id', depositId);
@@ -705,6 +732,7 @@ client.on('interactionCreate', async (interaction) => {
 
         await supabase.from('balances').update({ balance: newBalance, wager_required: newWager }).eq('user_id', userId);
 
+        // Process referral bonus if deposit >= $15M
         if (depositAmount >= 15000000 && user.referred_by) {
             const referrerId = user.referred_by;
 
@@ -728,7 +756,7 @@ client.on('interactionCreate', async (interaction) => {
                     try {
                         const referrerUser = await client.users.fetch(referrerId);
                         if (referrerUser) {
-                            await referrerUser.send(`🎉 **Referral Bonus Earned!** Your referral <@${userId}> deposited **$${depositAmount.toLocaleString()}** (more than $15M)! You earned **$30,000,000**. Claim it using \`/ref\` or \`/refer\`.`);
+                            await referrerUser.send(`🎉 **Referral Bonus Earned!** Your referral <@${userId}> deposited **$${depositAmount.toLocaleString()}**! You earned **$30,000,000**. Claim it using \`/ref\`.`);
                         }
                     } catch (err) { console.error(err); }
                 }
@@ -740,14 +768,36 @@ client.on('interactionCreate', async (interaction) => {
             embeds: [],
             components: []
         });
+
+        // Notify user in public channel
+        if (channelId) {
+            try {
+                const channel = await client.channels.fetch(channelId);
+                if (channel) {
+                    await channel.send(`✅ **Deposit Approved!** <@${userId}>'s deposit of **$${depositAmount.toLocaleString()}** has been credited to their balance!`);
+                }
+            } catch (err) { console.error(err); }
+        }
     }
 
+    // 3. Deposit Decline (Admin DM)
     if (interaction.customId.startsWith('decline_')) {
-        const [, depositId, userId] = interaction.customId.split('_');
+        const [, depositId, userId, channelId] = interaction.customId.split('_');
         await supabase.from('deposits').update({ status: 'declined' }).eq('id', depositId);
+        
         await interaction.update({ content: `❌ **Declined Deposit #${depositId}** for <@${userId}>.`, embeds: [], components: [] });
+
+        if (channelId) {
+            try {
+                const channel = await client.channels.fetch(channelId);
+                if (channel) {
+                    await channel.send(`❌ <@${userId}>, your deposit request #${depositId} was declined by the admin.`);
+                }
+            } catch (err) { console.error(err); }
+        }
     }
 
+    // 4. Withdrawal Approval (Admin DM)
     if (interaction.customId.startsWith('appwith_')) {
         const [, withId, userId, mcUsername, amount, channelId] = interaction.customId.split('_');
         const withAmount = parseInt(amount);
@@ -773,8 +823,9 @@ client.on('interactionCreate', async (interaction) => {
         } catch (err) { console.error(err); }
     }
 
+    // 5. Withdrawal Decline (Admin DM)
     if (interaction.customId.startsWith('decwith_')) {
-        const [, withId, userId, amount] = interaction.customId.split('_');
+        const [, withId, userId, amount, channelId] = interaction.customId.split('_');
         const withAmount = parseInt(amount);
 
         await supabase.from('withdrawals').update({ status: 'declined' }).eq('id', withId);
@@ -786,6 +837,15 @@ client.on('interactionCreate', async (interaction) => {
             embeds: [],
             components: []
         });
+
+        if (channelId) {
+            try {
+                const playChannel = await client.channels.fetch(channelId);
+                if (playChannel) {
+                    await playChannel.send(`❌ <@${userId}>, your withdrawal request #${withId} was declined. **$${withAmount.toLocaleString()}** has been refunded to your balance.`);
+                }
+            } catch (err) { console.error(err); }
+        }
     }
 });
 
