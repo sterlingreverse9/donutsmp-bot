@@ -1,6 +1,20 @@
+const express = require('express');
 const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { createClient } = require('@supabase/supabase-js');
 
+// 1. HTTP Server for Render Port Health Check
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.get('/', (req, res) => {
+    res.send('Donut Bet Bot is live!');
+});
+
+app.listen(PORT, () => {
+    console.log(`HTTP server listening on port ${PORT}`);
+});
+
+// 2. Discord Bot & Supabase Setup
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
