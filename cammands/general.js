@@ -5,33 +5,45 @@ const { EmbedBuilder } = require('discord.js');
 async function handleGeneralCommands(command, args, message, prefix) {
     const user = await getOrCreateUser(message.author.id, message.author.username);
 
-    if (command === 'bal' || command === 'balance') {
+    if (['ref', 'refer', 'referral'].includes(command)) {
+        // Build a direct link or simple referral share block
+        const refLink = `https://discord.com/channels/${message.guildId}/${message.channelId}?ref=${message.author.id}`;
+
         const embed = new EmbedBuilder()
-            .setTitle(`💰 Balance for ${message.author.username}`)
-            .setColor(0xf1c40f)
+            .setTitle('🤝 Your Referral Link & Stats')
+            .setColor(0x2ecc71)
+            .setDescription(`Share your referral code/link with friends to earn rewards!`)
             .addFields(
-                { name: 'Wallet Balance', value: `$${user.balance.toLocaleString()}`, inline: true },
-                { name: 'Claimable Rakeback', value: `$${(user.rakeback || 0).toLocaleString()}`, inline: true },
-                { name: 'Wager Required', value: `$${(user.wager_required || 0).toLocaleString()}`, inline: true }
+                { name: '📋 Your Referral Code', value: `\`${message.author.id}\``, inline: true },
+                { name: '🎁 Reward Terms', value: '• Your friend deposits **$1M**\n• You get **$5M Instant Bonus** + **2% of their lifetime losses**!', inline: false },
+                { name: '🔗 Quick Share', value: `Send your friend this code to run: \`${prefix}linkref ${message.author.id}\`` }
             )
-            .setThumbnail(message.author.displayAvatarURL())
             .setFooter({ text: 'Donut SMP Bot' });
 
         return message.reply({ embeds: [embed] });
     }
 
-    if (command === 'help') {
-        const embed = new EmbedBuilder()
-            .setTitle('📜 Donut SMP Bot Commands')
-            .setColor(0x9b59b6)
-            .setDescription(`Current Prefix: \`${prefix}\``)
-            .addFields(
-                { name: '🎮 Games', value: `\`${prefix}cf <heads/tails> <amount>\`\n\`${prefix}limbo <multiplier> <amount>\`` },
-                { name: '💳 Banking', value: `\`${prefix}bal\` — Check balance\n\`${prefix}pay <user> <amount>\` — Pay user\n\`${prefix}rakeback\` — Claim rakeback\n\`${prefix}wager\` — Check wager info` },
-                { name: '⚙️ Account', value: `\`${prefix}link <ign>\` — Link Minecraft IGN` }
-            );
+    if (command === 'linkref') {
+        const referrerId = args[0];
+        if (!referrerId) {
+            return message.reply(`❌ **Usage:** \`${prefix}linkref <referrer_user_id>\``);
+        }
 
-        return message.reply({ embeds: [embed] });
+        if (referrerId === message.author.id) {
+            return message.reply("❌ You cannot refer yourself!");
+        }
+
+        if (user.referred_by) {
+            return message.reply("❌ You have already linked a referrer!");
+        }
+
+        const { data: referrer } = await supabase.from('balances').select('*').eq('user_id', referrerId).single();
+        if (!referrer) {
+            return message.reply("❌ Invalid referrer ID.");
+        }
+
+        await supabase.from('balances').update({ referred_by: referrerId }).eq('user_id', message.author.id);
+        return message.reply(`✅ Successfully linked **${referrer.username || referrer.user_id}** as your referrer!`);
     }
 
     return false;
