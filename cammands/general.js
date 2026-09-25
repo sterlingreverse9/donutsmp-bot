@@ -72,7 +72,24 @@ async function handleGeneralCommands(command, args, message, prefix) {
         return true;
     }
 
+    if (command === 'link') {
+        const mcUsername = args[0];
+        if (!mcUsername) {
+            await message.reply(`❌ **Usage:** \`${prefix}link <MC_IGN>\``);
+            return true;
+        }
+
+        await supabase
+            .from('balances')
+            .update({ mc_username: mcUsername })
+            .eq('user_id', message.author.id);
+
+        await message.reply(`✅ Successfully linked Minecraft IGN **\`${mcUsername}\`**!`);
+        return true;
+    }
+
     return false;
 }
 
+// MUST MATCH THE DESTRUCTURED IMPORT IN index.js
 module.exports = { handleGeneralCommands };
