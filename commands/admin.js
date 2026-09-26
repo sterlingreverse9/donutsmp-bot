@@ -1,4 +1,4 @@
-const { StringSelectMenuBuilder, ActionRowBuilder, EmbedBuilder } = require('discord.js');
+const { StringSelectMenuBuilder, ActionRowBuilder } = require('discord.js');
 
 async function handleAdminCommands(command, args, message, prefix) {
     try {
@@ -14,10 +14,7 @@ async function handleAdminCommands(command, args, message, prefix) {
                 .setCustomId('select_win_game')
                 .setPlaceholder('Select a game to set win chances')
                 .addOptions([
-                    { label: 'Coinflip', value: 'cf', description: 'Configure Coinflip win odds' },
-                    { label: 'Dice', value: 'dice', description: 'Configure Dice win odds' },
-                    { label: 'Mines', value: 'mines', description: 'Configure Mines win odds' },
-                    { label: 'Slots', value: 'slots', description: 'Configure Slots win odds' }
+                    { label: 'Coinflip (cf)', value: 'cf', description: 'Configure Coinflip win odds' }
                 ]);
 
             const row = new ActionRowBuilder().addComponents(selectMenu);
