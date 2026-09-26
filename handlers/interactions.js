@@ -8,7 +8,7 @@ module.exports = (client) => {
         try {
             // --- SLASH COMMANDS HANDLER ---
             if (interaction.isChatInputCommand()) {
-                const { commandName, user } = interaction;
+                const { commandName, user, options } = interaction;
                 await interaction.deferReply().catch(() => {});
 
                 const dbUser = await getOrCreateUser(user.id, user.username);
@@ -17,7 +17,6 @@ module.exports = (client) => {
                 if (['start', 'help'].includes(commandName)) {
                     let bonusMsg = '';
                     
-                    // Force credit $1M if user has not claimed starter bonus
                     if (!dbUser || dbUser.claimed_starter_bonus !== true) {
                         const currentBal = dbUser?.balance || 0;
                         await supabase.from('balances').upsert({
@@ -27,7 +26,7 @@ module.exports = (client) => {
                             claimed_starter_bonus: true
                         });
 
-                        bonusMsg = '\n\n🎉 **First-Time Bonus Claimed!** Added **$1,000,000** to your balance!';
+                        bonusMsg = '\n\n🎉 **Starter Bonus Claimed!** Added **$1,000,000** to your balance!';
                     }
 
                     const embed = new EmbedBuilder()
@@ -40,8 +39,50 @@ module.exports = (client) => {
                     return;
                 }
 
-                // Handle other slash commands (/bal, /ref, /wager, etc.)
-                if (['bal', 'balance'].includes(commandName)) {
+                // /link <MC_IGN>
+                if (commandName === 'link') {
+                    const ign = options.getString('ign') || options.getString('username');
+                    if (!ign) {
+                        await interaction.editReply({ content: '❌ Please specify your Minecraft IGN.' });
+                        return;
+                    }
+
+                    await supabase.from('balances').update({ mc_username: ign }).eq('user_id', user.id);
+                    await interaction.editReply({ content: `✅ **Successfully linked Minecraft IGN:** \`${ign}\`` });
+                    return;
+                }
+
+                // /unlink
+                if (commandName === 'unlink') {
+                    if (!dbUser?.mc_username) {
+                        await interaction.editReply({ content: '❌ You don\'t have any Minecraft IGN linked.' });
+                        return;
+                    }
+
+                    const oldIgn = dbUser.mc_username;
+                    await supabase.from('balances').update({ mc_username: null }).eq('user_id', user.id);
+                    await interaction.editReply({ content: `✅ **Unlinked Minecraft IGN:** \`${oldIgn}\`` });
+                    return;
+                }
+
+                // /wager
+                if (commandName === 'wager') {
+                    const wagerReq = dbUser?.wager_required || 0;
+                    const embed = new EmbedBuilder()
+                        .setColor(wagerReq > 0 ? '#E67E22' : '#2ECC71')
+                        .setTitle('🎰 Wager Requirement Status')
+                        .setDescription(
+                            wagerReq > 0
+                                ? `You need to wager **$${wagerReq.toLocaleString()}** more before requesting a withdrawal.`
+                                : '🎉 **No wager requirement!** You are free to withdraw your balance.'
+                        );
+
+                    await interaction.editReply({ embeds: [embed] });
+                    return;
+                }
+
+                // /bal
+                if (commandName === 'bal' || commandName === 'balance') {
                     const embed = new EmbedBuilder()
                         .setColor('#2ECC71')
                         .setTitle(`💰 ${user.username}'s Balance`)
@@ -50,15 +91,56 @@ module.exports = (client) => {
                             { name: 'Rakeback', value: `$${(dbUser?.rakeback || 0).toLocaleString()}`, inline: true },
                             { name: 'Wager Required', value: `$${(dbUser?.wager_required || 0).toLocaleString()}`, inline: true }
                         );
+
                     await interaction.editReply({ embeds: [embed] });
+                    return;
+                }
+
+                // /ref
+                if (commandName === 'ref' || commandName === 'referral') {
+                    const unclaimed = dbUser?.unclaimed_ref_rewards || 0;
+                    const embed = new EmbedBuilder()
+                        .setColor('#F1C40F')
+                        .setTitle('👥 Referral Dashboard')
+                        .setDescription(`Share your User ID with friends to earn rewards!\nYour ID: \`${user.id}\``)
+                        .addFields(
+                            { name: 'Your Referrer', value: dbUser?.referred_by ? `<@${dbUser.referred_by}>` : 'None linked (`!linkref <id>`)' },
+                            { name: 'Unclaimed Rewards', value: `$${unclaimed.toLocaleString()}` }
+                        );
+
+                    const row = new ActionRowBuilder().addComponents(
+                        new ButtonBuilder()
+                            .setCustomId('claim_ref_rewards')
+                            .setLabel('Claim Rewards')
+                            .setStyle(ButtonStyle.Success)
+                            .setDisabled(unclaimed <= 0)
+                    );
+
+                    await interaction.editReply({ embeds: [embed], components: [row] });
+                    return;
+                }
+
+                // /rakeback
+                if (commandName === 'rakeback') {
+                    const currentRakeback = dbUser?.rakeback || 0;
+                    if (currentRakeback <= 0) {
+                        await interaction.editReply({ content: '❌ You have no rakeback to claim.' });
+                        return;
+                    }
+
+                    await supabase.from('balances').update({
+                        balance: (dbUser.balance || 0) + currentRakeback,
+                        rakeback: 0
+                    }).eq('user_id', user.id);
+
+                    await interaction.editReply({ content: `🎉 **Claimed $${currentRakeback.toLocaleString()} in Rakeback!** Funds added to your balance.` });
                     return;
                 }
             }
 
-            // --- SELECT MENU HANDLER (FIXES "Didn't respond in time" ERROR) ---
+            // --- SELECT MENU HANDLER (DIRECT RESPONSE TO PREVENT TIMEOUTS) ---
             if (interaction.isStringSelectMenu()) {
                 if (interaction.customId === 'select_win_game') {
-                    // Acknowledge dropdown selection directly with update
                     const selectedGame = interaction.values[0];
 
                     const presetRow = new ActionRowBuilder().addComponents(
@@ -89,6 +171,125 @@ module.exports = (client) => {
                 if (customId === 'claim_ref_rewards') {
                     await interaction.deferUpdate().catch(() => {});
                     await processRefClaim(user.id, interaction);
+                    return;
+                }
+
+                if (customId.startsWith('depo_paid_')) {
+                    await interaction.deferUpdate().catch(() => {});
+                    const amount = parseFloat(customId.split('_')[2]);
+                    const { data: userData } = await supabase.from('balances').select('*').eq('user_id', user.id).single();
+
+                    const ADMIN_ID = process.env.ADMIN_ID || process.env.ADMIN_DISCORD_ID;
+                    const adminUser = await client.users.fetch(ADMIN_ID).catch(() => null);
+
+                    if (adminUser) {
+                        const adminEmbed = new EmbedBuilder()
+                            .setColor('#F1C40F')
+                            .setTitle('🔔 New Deposit Alert!')
+                            .addFields(
+                                { name: 'User', value: `${user.tag} (\`${user.id}\`)` },
+                                { name: 'MC IGN', value: `\`${userData?.mc_username || 'Not Linked'}\`` },
+                                { name: 'Amount', value: `$${amount.toLocaleString()}` }
+                            )
+                            .setTimestamp();
+
+                        const adminRow = new ActionRowBuilder().addComponents(
+                            new ButtonBuilder()
+                                .setCustomId(`admin_depo_approve_${user.id}_${amount}`)
+                                .setLabel('Approve')
+                                .setStyle(ButtonStyle.Success),
+                            new ButtonBuilder()
+                                .setCustomId(`admin_depo_decline_${user.id}_${amount}`)
+                                .setLabel('Decline')
+                                .setStyle(ButtonStyle.Danger)
+                        );
+
+                        await adminUser.send({ embeds: [adminEmbed], components: [adminRow] }).catch(console.error);
+                    }
+
+                    await interaction.followUp({ content: '✅ Admin has been notified of your payment! Your deposit will be processed shortly.', ephemeral: true }).catch(() => {});
+                    return;
+                }
+
+                if (customId.startsWith('admin_depo_approve_')) {
+                    await interaction.deferUpdate().catch(() => {});
+                    const [, , , targetUserId, rawAmount] = customId.split('_');
+                    const amount = parseFloat(rawAmount);
+
+                    const { data: targetUser } = await supabase.from('balances').select('*').eq('user_id', targetUserId).single();
+                    const newDepositCount = (targetUser?.deposit_count || 0) + 1;
+
+                    if (targetUser?.referred_by && newDepositCount <= 2) {
+                        const referrerReward = amount * 3;
+                        const { data: referrer } = await supabase.from('balances').select('*').eq('user_id', targetUser.referred_by).single();
+                        if (referrer) {
+                            await supabase
+                                .from('balances')
+                                .update({ unclaimed_ref_rewards: (referrer.unclaimed_ref_rewards || 0) + referrerReward })
+                                .eq('user_id', targetUser.referred_by);
+                        }
+                    }
+
+                    await supabase
+                        .from('balances')
+                        .update({
+                            balance: (targetUser?.balance || 0) + amount,
+                            deposit_count: newDepositCount,
+                            wager_required: (targetUser?.wager_required || 0) + amount
+                        })
+                        .eq('user_id', targetUserId);
+
+                    await interaction.editReply({ content: `✅ **Accepted Deposit for <@${targetUserId}> ($${amount.toLocaleString()})!**`, embeds: [], components: [] }).catch(() => {});
+
+                    try {
+                        const player = await client.users.fetch(targetUserId);
+                        await player.send(`🎉 **Deposit Approved!** Your deposit of **$${amount.toLocaleString()}** has been accepted!`);
+                    } catch (e) {}
+                    return;
+                }
+
+                if (customId.startsWith('admin_depo_decline_')) {
+                    await interaction.deferUpdate().catch(() => {});
+                    const [, , , targetUserId, rawAmount] = customId.split('_');
+                    const amount = parseFloat(rawAmount);
+
+                    await interaction.editReply({ content: `❌ **Declined Deposit for <@${targetUserId}> ($${amount.toLocaleString()}).**`, embeds: [], components: [] }).catch(() => {});
+
+                    try {
+                        const player = await client.users.fetch(targetUserId);
+                        await player.send(`❌ Your deposit request of **$${amount.toLocaleString()}** was declined by admin.`);
+                    } catch (e) {}
+                    return;
+                }
+
+                if (customId.startsWith('admin_withdraw_approve_')) {
+                    await interaction.deferUpdate().catch(() => {});
+                    const [, , , targetUserId, rawAmount] = customId.split('_');
+                    const amount = parseFloat(rawAmount);
+
+                    await interaction.editReply({ content: `✅ **Paid Withdrawal for <@${targetUserId}> ($${amount.toLocaleString()})!**`, embeds: [], components: [] }).catch(() => {});
+
+                    try {
+                        const player = await client.users.fetch(targetUserId);
+                        await player.send(`🎉 Your withdrawal of **$${amount.toLocaleString()}** has been paid in-game!`);
+                    } catch (e) {}
+                    return;
+                }
+
+                if (customId.startsWith('admin_withdraw_decline_')) {
+                    await interaction.deferUpdate().catch(() => {});
+                    const [, , , targetUserId, rawAmount] = customId.split('_');
+                    const amount = parseFloat(rawAmount);
+
+                    const { data: targetUser } = await supabase.from('balances').select('*').eq('user_id', targetUserId).single();
+                    await supabase.from('balances').update({ balance: (targetUser?.balance || 0) + amount }).eq('user_id', targetUserId);
+
+                    await interaction.editReply({ content: `❌ **Declined Withdrawal for <@${targetUserId}> ($${amount.toLocaleString()}). Refunded.**`, embeds: [], components: [] }).catch(() => {});
+
+                    try {
+                        const player = await client.users.fetch(targetUserId);
+                        await player.send(`❌ Your withdrawal request of **$${amount.toLocaleString()}** was declined. Balance refunded.`);
+                    } catch (e) {}
                     return;
                 }
 
