@@ -10,20 +10,22 @@ async function handleGeneralCommands(command, args, message, prefix) {
                 .setColor('#F1C40F')
                 .setTitle(`💰 ${message.author.username}'s Profile`)
                 .addFields(
-                    { name: 'Balance', value: `$${(user.balance || 0).toLocaleString()}`, inline: true },
-                    { name: 'Linked IGN', value: user.mc_username ? `\`${user.mc_username}\`` : 'None (`/link`)', inline: true },
-                    { name: 'Rakeback', value: `$${(user.rakeback || 0).toLocaleString()}`, inline: true },
-                    { name: 'Wager Left', value: `$${(user.wager_required || 0).toLocaleString()}`, inline: true }
+                    { name: 'Balance', value: `$${(user?.balance || 0).toLocaleString()}`, inline: true },
+                    { name: 'Linked IGN', value: user?.mc_username ? `\`${user.mc_username}\`` : 'None (`/link`)', inline: true },
+                    { name: 'Rakeback', value: `$${(user?.rakeback || 0).toLocaleString()}`, inline: true },
+                    { name: 'Wager Left', value: `$${(user?.wager_required || 0).toLocaleString()}`, inline: true }
                 );
             await message.reply({ embeds: [embed] });
             return true;
         }
 
         if (['ref', 'refer', 'referral'].includes(command)) {
-            const { data: refList } = await supabase
+            const { data: refList, error } = await supabase
                 .from('balances')
                 .select('*')
                 .eq('referred_by', message.author.id);
+
+            if (error) console.error('Supabase query error:', error);
 
             const totalRefs = refList ? refList.length : 0;
             const refNames = refList && refList.length > 0
@@ -57,7 +59,7 @@ async function handleGeneralCommands(command, args, message, prefix) {
                 await message.reply('❌ You cannot refer yourself!');
                 return true;
             }
-            if (user.referred_by) {
+            if (user?.referred_by) {
                 await message.reply('❌ You have already linked a referrer.');
                 return true;
             }
@@ -92,7 +94,7 @@ async function handleGeneralCommands(command, args, message, prefix) {
         return false;
     } catch (err) {
         console.error('❌ Error inside handleGeneralCommands:', err);
-        await message.reply('❌ Failed to process general command. Check bot logs.');
+        await message.reply('❌ Error executing general command. Check bot logs.');
         return true;
     }
 }
