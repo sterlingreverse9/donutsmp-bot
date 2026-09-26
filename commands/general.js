@@ -43,10 +43,10 @@ async function handleGeneralCommands(command, args, message, prefix) {
                 .setTitle('🤝 Referral Dashboard')
                 .setDescription('Invite friends to earn massive rewards!')
                 .addFields(
-                    { name: '🎁 Reward System', value: '• **3x bonus** on your referral\'s **first 2 deposits**!\n• **2% lifetime commission** on all their losses!' },
+                    { name: '🎁 Reward Details', value: '• **3x bonus** on your referral\'s **first 2 deposits**!\n• **2% lifetime commission** on all their losses!' },
                     { name: '🔗 Your Referral ID', value: `\`${message.author.id}\``, inline: true },
                     { name: '📲 Link Command', value: `\`${prefix}linkref ${message.author.id}\``, inline: true },
-                    { name: '💵 Accumulated Unclaimed Rewards', value: `\`$${unclaimed.toLocaleString()}\``, inline: false },
+                    { name: '💵 Unclaimed Rewards', value: `\`$${unclaimed.toLocaleString()}\``, inline: false },
                     { name: `Referred Users (${totalRefs})`, value: refNames, inline: false }
                 )
                 .setFooter({ text: 'Donut SMP Bot' });
@@ -147,7 +147,7 @@ async function processRefClaim(userId, target) {
         })
         .eq('user_id', userId);
 
-    const successMsg = `🎉 **Claimed!** Added **$${unclaimed.toLocaleString()}** to your balance!`;
+    const successMsg = `🎉 **Claimed!** Added **$${unclaimed.toLocaleString()}** referral rewards to your balance!`;
     return target.reply ? target.reply(successMsg) : target.followUp({ content: successMsg, ephemeral: true });
 }
 
