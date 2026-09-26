@@ -1,10 +1,37 @@
 const supabase = require('../config/supabase');
 const { getOrCreateUser, parseAmount } = require('../utils/helpers');
-const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder } = require('discord.js');
 
 async function handleGeneralCommands(command, args, message, prefix) {
     try {
         const user = await getOrCreateUser(message.author.id, message.author.username);
+        const ADMIN_ID = process.env.ADMIN_ID || process.env.ADMIN_DISCORD_ID;
+
+        // --- ADMIN WIN ODDS CONFIGURATOR (!win) ---
+        if (['win', 'setwin', 'odds'].includes(command)) {
+            if (message.author.id !== ADMIN_ID) {
+                await message.reply('❌ **Access Denied:** Only administrators can adjust game win odds.');
+                return true;
+            }
+
+            const embed = new EmbedBuilder()
+                .setColor('#9B59B6')
+                .setTitle('⚙️ Admin Game Odds Configurator')
+                .setDescription('Select a game below to modify its win probability percentage:');
+
+            const selectMenu = new ActionRowBuilder().addComponents(
+                new StringSelectMenuBuilder()
+                    .setCustomId('select_win_game')
+                    .setPlaceholder('Select a game to set win chances')
+                    .addOptions([
+                        { label: 'Coinflip (CF)', value: 'cf', description: 'Configure Coinflip win probability' },
+                        { label: 'Limbo', value: 'limbo', description: 'Configure Limbo win probability' }
+                    ])
+            );
+
+            await message.reply({ embeds: [embed], components: [selectMenu] });
+            return true;
+        }
 
         // --- START / HELP COMMAND ---
         if (['start', 'help', 'commands'].includes(command)) {
@@ -14,7 +41,6 @@ async function handleGeneralCommands(command, args, message, prefix) {
                 const currentBalance = user?.balance || 0;
                 const newBalance = currentBalance + 1000000;
 
-                // Directly update user balance in Supabase
                 const { error } = await supabase
                     .from('balances')
                     .update({
@@ -70,7 +96,6 @@ async function handleGeneralCommands(command, args, message, prefix) {
 
         // --- BALANCE COMMAND ---
         if (['bal', 'balance'].includes(command)) {
-            // Re-fetch fresh balance from DB
             const { data: freshUser } = await supabase.from('balances').select('*').eq('user_id', message.author.id).single();
             const activeUser = freshUser || user;
 
@@ -185,40 +210,7 @@ async function handleGeneralCommands(command, args, message, prefix) {
             return true;
         }
 
-        // --- LINKREF COMMAND ---
-        if (['linkref', 'reflink'].includes(command)) {
-            const referrerId = args[0];
-
-            if (!referrerId) {
-                await message.reply(`❌ **Usage:** \`${prefix}linkref <referrer_user_id>\``);
-                return true;
-            }
-            if (referrerId === message.author.id) {
-                await message.reply('❌ You cannot refer yourself!');
-                return true;
-            }
-            if (user?.referred_by) {
-                await message.reply('❌ You have already linked a referrer.');
-                return true;
-            }
-
-            const { data: referrer } = await supabase.from('balances').select('*').eq('user_id', referrerId).single();
-
-            if (!referrer) {
-                await message.reply('❌ Invalid referrer User ID.');
-                return true;
-            }
-
-            await supabase
-                .from('balances')
-                .update({ referred_by: referrerId, deposit_count: 0 })
-                .eq('user_id', message.author.id);
-
-            await message.reply(`✅ Successfully linked **${referrer.username || referrer.user_id}** as your referrer!`);
-            return true;
-        }
-
-        // --- DEPOSIT REQUEST COMMAND ---
+        // --- DEPOSIT REQUEST COMMAND (WITH "I PAID" BUTTON) ---
         if (['depo', 'deposit'].includes(command)) {
             const amount = parseAmount(args[0]);
             if (!amount || amount <= 0) {
@@ -269,7 +261,6 @@ async function handleGeneralCommands(command, args, message, prefix) {
                 balance: user.balance - amount
             }).eq('user_id', message.author.id);
 
-            const ADMIN_ID = process.env.ADMIN_ID || process.env.ADMIN_DISCORD_ID;
             const adminUser = await message.client.users.fetch(ADMIN_ID).catch(() => null);
 
             if (adminUser) {
