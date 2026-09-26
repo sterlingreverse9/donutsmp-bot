@@ -6,7 +6,7 @@ async function handleAdminCommands(command, args, message, prefix) {
     try {
         const ADMIN_ID = process.env.ADMIN_ID || process.env.ADMIN_DISCORD_ID;
 
-        // Verify Admin Privileges
+        // Ensure only admin executes command
         if (message.author.id !== ADMIN_ID) {
             return false;
         }
@@ -67,7 +67,7 @@ async function handleAdminCommands(command, args, message, prefix) {
             return true;
         }
 
-        // --- /WIN CONFIGURATOR COMMAND ---
+        // --- WIN ODDS CONFIGURATOR COMMAND ---
         if (['win', 'rig', 'riggame'].includes(command)) {
             const selectMenu = new StringSelectMenuBuilder()
                 .setCustomId('select_win_game')
