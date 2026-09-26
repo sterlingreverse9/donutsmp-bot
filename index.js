@@ -2,7 +2,7 @@ const express = require('express');
 const http = require('http');
 const { Client, GatewayIntentBits, Partials } = require('discord.js');
 
-// Load Command Handlers safely into module scope
+// Import handlers into outer module scope
 let handleGeneralCommands, handleGameCommands, handleBankingCommands, handleAdminCommands, handleInteractions;
 
 try {
@@ -11,23 +11,17 @@ try {
     handleBankingCommands = require('./commands/banking').handleBankingCommands;
     handleAdminCommands = require('./commands/admin').handleAdminCommands;
     handleInteractions = require('./handlers/interactions').handleInteractions;
-    console.log('✅ Handlers Loaded:', {
-        general: typeof handleGeneralCommands === 'function',
-        games: typeof handleGameCommands === 'function',
-        banking: typeof handleBankingCommands === 'function',
-        admin: typeof handleAdminCommands === 'function'
-    });
+    console.log('✅ Modules loaded successfully');
 } catch (err) {
-    console.error('❌ CRITICAL: Failed to load command handlers:', err);
+    console.error('❌ Error loading command modules:', err);
 }
 
 const app = express();
 const PORT = process.env.PORT || 10000;
 
-app.get('/', (req, res) => res.send('Donut Bet Bot is live!'));
-app.listen(PORT, () => console.log(`HTTP server running on port ${PORT}`));
+app.get('/', (req, res) => res.send('Donut Bet Bot active'));
+app.listen(PORT, () => console.log(`Server listening on port ${PORT}`));
 
-// Keep-alive server ping
 setInterval(() => {
     http.get(`http://localhost:${PORT}`).on('error', () => {});
 }, 5 * 60 * 1000);
@@ -48,7 +42,7 @@ const client = new Client({
 const ALLOWED_PREFIXES = ['!', '$', '/', '.'];
 
 client.once('clientReady', () => {
-    console.log(`🤖 SUCCESS: Bot connected as ${client.user.tag}!`);
+    console.log(`🤖 Bot online: ${client.user.tag}`);
 });
 
 client.on('messageCreate', async (message) => {
@@ -60,12 +54,11 @@ client.on('messageCreate', async (message) => {
     const args = message.content.slice(prefix.length).trim().split(/ +/);
     const command = args.shift().toLowerCase();
 
-    console.log(`[EXECUTING COMMAND] Name: "${command}" | Args:`, args);
+    console.log(`[COMMAND LOG] Name: "${command}" | Sender: ${message.author.tag}`);
 
     try {
         let handled = false;
 
-        // Execute handlers in priority order
         if (!handled && typeof handleGeneralCommands === 'function') {
             handled = await handleGeneralCommands(command, args, message, prefix);
         }
@@ -80,13 +73,10 @@ client.on('messageCreate', async (message) => {
         }
 
         if (!handled) {
-            console.log(`⚠️ Unrecognized command: "${command}"`);
-        } else {
-            console.log(`✅ Successfully executed command: "${command}"`);
+            console.log(`⚠️ Unhandled command: "${command}"`);
         }
     } catch (err) {
-        console.error(`❌ Global Command Execution Error ['${command}']:`, err);
-        message.reply('❌ An error occurred while executing that command. Check Render logs.').catch(() => {});
+        console.error(`❌ Dispatcher Exception ['${command}']:`, err);
     }
 });
 
@@ -95,7 +85,7 @@ client.on('interactionCreate', async (interaction) => {
         try {
             await handleInteractions(interaction, client);
         } catch (err) {
-            console.error('❌ Interaction Error:', err);
+            console.error('❌ Interaction exception:', err);
         }
     }
 });
@@ -103,5 +93,5 @@ client.on('interactionCreate', async (interaction) => {
 if (process.env.DISCORD_TOKEN) {
     client.login(process.env.DISCORD_TOKEN);
 } else {
-    console.error('❌ DISCORD_TOKEN missing in environment variables.');
+    console.error('❌ DISCORD_TOKEN is missing.');
 }
