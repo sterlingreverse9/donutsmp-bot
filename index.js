@@ -2,12 +2,24 @@ const express = require('express');
 const http = require('http');
 const { Client, GatewayIntentBits, Partials } = require('discord.js');
 
-// Import Command Handlers
-const { handleAdminCommands } = require('./commands/admin');
-const { handleBankingCommands } = require('./commands/banking');
-const { handleGameCommands } = require('./commands/games');
-const { handleGeneralCommands } = require('./commands/general');
-const { handleInteractions } = require('./handlers/interactions');
+// Load Command Handlers safely into module scope
+let handleGeneralCommands, handleGameCommands, handleBankingCommands, handleAdminCommands, handleInteractions;
+
+try {
+    handleGeneralCommands = require('./commands/general').handleGeneralCommands;
+    handleGameCommands = require('./commands/games').handleGameCommands;
+    handleBankingCommands = require('./commands/banking').handleBankingCommands;
+    handleAdminCommands = require('./commands/admin').handleAdminCommands;
+    handleInteractions = require('./handlers/interactions').handleInteractions;
+    console.log('✅ Handlers Loaded:', {
+        general: typeof handleGeneralCommands === 'function',
+        games: typeof handleGameCommands === 'function',
+        banking: typeof handleBankingCommands === 'function',
+        admin: typeof handleAdminCommands === 'function'
+    });
+} catch (err) {
+    console.error('❌ CRITICAL: Failed to load command handlers:', err);
+}
 
 const app = express();
 const PORT = process.env.PORT || 10000;
@@ -15,7 +27,7 @@ const PORT = process.env.PORT || 10000;
 app.get('/', (req, res) => res.send('Donut Bet Bot is live!'));
 app.listen(PORT, () => console.log(`HTTP server running on port ${PORT}`));
 
-// Keep alive ping
+// Keep-alive server ping
 setInterval(() => {
     http.get(`http://localhost:${PORT}`).on('error', () => {});
 }, 5 * 60 * 1000);
@@ -53,25 +65,28 @@ client.on('messageCreate', async (message) => {
     try {
         let handled = false;
 
-        if (typeof handleGeneralCommands === 'function' && !handled) {
+        // Execute handlers in priority order
+        if (!handled && typeof handleGeneralCommands === 'function') {
             handled = await handleGeneralCommands(command, args, message, prefix);
         }
-        if (typeof handleGameCommands === 'function' && !handled) {
+        if (!handled && typeof handleGameCommands === 'function') {
             handled = await handleGameCommands(command, args, message, prefix);
         }
-        if (typeof handleBankingCommands === 'function' && !handled) {
+        if (!handled && typeof handleBankingCommands === 'function') {
             handled = await handleBankingCommands(command, args, message, prefix);
         }
-        if (typeof handleAdminCommands === 'function' && !handled) {
+        if (!handled && typeof handleAdminCommands === 'function') {
             handled = await handleAdminCommands(command, args, message, prefix);
         }
 
         if (!handled) {
             console.log(`⚠️ Unrecognized command: "${command}"`);
+        } else {
+            console.log(`✅ Successfully executed command: "${command}"`);
         }
     } catch (err) {
-        console.error(`❌ Global error processing command '${command}':`, err);
-        message.reply('❌ An internal error occurred while executing that command.').catch(() => {});
+        console.error(`❌ Global Command Execution Error ['${command}']:`, err);
+        message.reply('❌ An error occurred while executing that command. Check Render logs.').catch(() => {});
     }
 });
 
