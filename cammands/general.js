@@ -11,7 +11,7 @@ async function handleGeneralCommands(command, args, message, prefix) {
                 .setTitle(`💰 ${message.author.username}'s Profile`)
                 .addFields(
                     { name: 'Balance', value: `$${(user?.balance || 0).toLocaleString()}`, inline: true },
-                    { name: 'Linked IGN', value: user?.mc_username ? `\`${user.mc_username}\`` : 'None (`/link`)', inline: true },
+                    { name: 'Linked IGN', value: user?.mc_username ? `\`${user.mc_username}\`` : 'None (`!link <IGN>`)', inline: true },
                     { name: 'Rakeback', value: `$${(user?.rakeback || 0).toLocaleString()}`, inline: true },
                     { name: 'Wager Left', value: `$${(user?.wager_required || 0).toLocaleString()}`, inline: true }
                 );
@@ -29,7 +29,7 @@ async function handleGeneralCommands(command, args, message, prefix) {
 
             const totalRefs = refList ? refList.length : 0;
             const refNames = refList && refList.length > 0
-                ? refList.map((r, idx) => `${idx + 1}. **${r.username \vert{}\vert{} 'User'}** (${r.ref_reward_claimed ? '✅ Qualified' : '⏳ Pending $1M Deposit'})`).join('\n')
+                ? refList.map((r, idx) => `${idx + 1}. **${r.username \vert{}\vert{} 'User'}** (${r.ref_reward_claimed ? '✅ Qualified' : '⏳ Pending'})`).join('\n')
                 : 'No referred users yet.';
 
             const embed = new EmbedBuilder()
@@ -37,8 +37,8 @@ async function handleGeneralCommands(command, args, message, prefix) {
                 .setTitle('🤝 Referral Dashboard')
                 .setDescription('Invite friends to earn massive rewards!')
                 .addFields(
-                    { name: '🎁 Reward Details', value: '• Your friend deposits **$1,000,000** total\n• You receive **$5,000,000** bonus + **2% of their lifetime losses**!' },
-                    { name: '🔗 Your Referral Code', value: `\`${message.author.id}\``, inline: true },
+                    { name: '🎁 Reward Details', value: '• Friend deposits **$1,000,000** total\n• You receive **$5,000,000** + **2% of their lifetime losses**!' },
+                    { name: '🔗 Your Referral ID', value: `\`${message.author.id}\``, inline: true },
                     { name: '📲 Link Command', value: `\`${prefix}linkref ${message.author.id}\``, inline: true },
                     { name: `Referred Users (${totalRefs})`, value: refNames, inline: false }
                 )
@@ -93,8 +93,8 @@ async function handleGeneralCommands(command, args, message, prefix) {
 
         return false;
     } catch (err) {
-        console.error('❌ Error inside handleGeneralCommands:', err);
-        await message.reply('❌ Error executing general command. Check bot logs.');
+        console.error('❌ Error in handleGeneralCommands:', err);
+        await message.reply('❌ Error processing general command.');
         return true;
     }
 }
