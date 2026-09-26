@@ -1,95 +1,130 @@
 const supabase = require('../config/supabase');
-const { parseAmount } = require('../utils/helpers');
-const { StringSelectMenuBuilder, ActionRowBuilder } = require('discord.js');
+const { parseAmount, getOrCreateUser } = require('../utils/helpers');
+const { EmbedBuilder } = require('discord.js');
 
 async function handleAdminCommands(command, args, message, prefix) {
     try {
-        const ADMIN_ID = process.env.ADMIN_ID || process.env.ADMIN_DISCORD_ID;
+        const isAdmin = message.member?.permissions.has('Administrator');
+        if (!isAdmin) return false;
 
-        // Ensure only admin executes command
-        if (message.author.id !== ADMIN_ID) {
-            return false;
-        }
-
-        // --- ADD BALANCE COMMAND ---
-        if (['addbal', 'addbalance', 'givebal'].includes(command)) {
-            const targetUser = message.mentions.users.first() || (args[0] ? await message.client.users.fetch(args[0]).catch(() => null) : null);
-            const rawAmount = message.mentions.users.first() ? args[1] : args[1];
+        // --- ADDBAL COMMAND ---
+        if (['addbal', 'addbalance'].includes(command)) {
+            const targetUser = message.mentions.users.first();
+            const rawAmount = args[1];
 
             if (!targetUser || !rawAmount) {
-                await message.reply(`❌ **Usage:** \`${prefix}addbal @user <amount>\` or \`${prefix}addbal <User_ID> <amount>\``);
+                await message.reply(`❌ **Usage:** \`${prefix}addbal @user <amount>\``);
                 return true;
             }
 
             const amount = parseAmount(rawAmount);
             if (!amount || amount <= 0) {
-                await message.reply('❌ Invalid amount specified.');
+                await message.reply('❌ **Invalid amount.**');
                 return true;
             }
 
-            const { data: user } = await supabase.from('balances').select('*').eq('user_id', targetUser.id).single();
-            const currentBal = user?.balance || 0;
-            const newBal = currentBal + amount;
+            const userData = await getOrCreateUser(targetUser.id, targetUser.username);
+            const newBalance = (userData.balance || 0) + amount;
+            const newWager = (userData.wager_required || 0) + amount; // Adding balance adds wager requirement
 
-            await supabase.from('balances').upsert({
+            const { error } = await supabase.from('balances').upsert({
                 user_id: targetUser.id,
                 username: targetUser.username,
-                balance: newBal
-            });
+                balance: newBalance,
+                wager_required: newWager
+            }, { onConflict: 'user_id' });
 
-            await message.reply(`✅ Added **$${amount.toLocaleString()}** to ${targetUser.username}'s balance! New balance: **$${newBal.toLocaleString()}**.`);
+            if (error) throw error;
+
+            await message.reply(`✅ Added **$${amount.toLocaleString()}** to ${targetUser.username}'s balance! (Wager Req: +$${amount.toLocaleString()})`);
             return true;
         }
 
-        // --- DEDUCT BALANCE COMMAND ---
-        if (['deductbal', 'deductbalance', 'removebal', 'takebal'].includes(command)) {
-            const targetUser = message.mentions.users.first() || (args[0] ? await message.client.users.fetch(args[0]).catch(() => null) : null);
-            const rawAmount = message.mentions.users.first() ? args[1] : args[1];
+        // --- DEDUCTBAL COMMAND ---
+        if (['deductbal', 'removebal'].includes(command)) {
+            const targetUser = message.mentions.users.first();
+            const rawAmount = args[1];
 
             if (!targetUser || !rawAmount) {
-                await message.reply(`❌ **Usage:** \`${prefix}deductbal @user <amount>\` or \`${prefix}deductbal <User_ID> <amount>\``);
+                await message.reply(`❌ **Usage:** \`${prefix}deductbal @user <amount>\``);
                 return true;
             }
 
             const amount = parseAmount(rawAmount);
             if (!amount || amount <= 0) {
-                await message.reply('❌ Invalid amount specified.');
+                await message.reply('❌ **Invalid amount.**');
                 return true;
             }
 
-            const { data: user } = await supabase.from('balances').select('*').eq('user_id', targetUser.id).single();
-            const currentBal = user?.balance || 0;
-            const newBal = Math.max(0, currentBal - amount);
+            const userData = await getOrCreateUser(targetUser.id, targetUser.username);
+            const newBalance = Math.max(0, (userData.balance || 0) - amount);
 
-            await supabase.from('balances').update({ balance: newBal }).eq('user_id', targetUser.id);
+            const { error } = await supabase.from('balances').upsert({
+                user_id: targetUser.id,
+                username: targetUser.username,
+                balance: newBalance
+            }, { onConflict: 'user_id' });
 
-            await message.reply(`✂️ Deducted **$${amount.toLocaleString()}** from ${targetUser.username}'s balance! New balance: **$${newBal.toLocaleString()}**.`);
+            if (error) throw error;
+
+            await message.reply(`✅ Deducted **$${amount.toLocaleString()}** from ${targetUser.username}'s balance! New Balance: **$${newBalance.toLocaleString()}**`);
             return true;
         }
 
-        // --- WIN ODDS CONFIGURATOR COMMAND ---
-        if (['win', 'rig', 'riggame'].includes(command)) {
-            const selectMenu = new StringSelectMenuBuilder()
-                .setCustomId('select_win_game')
-                .setPlaceholder('Select a game to set win chances')
-                .addOptions([
-                    { label: 'Coinflip (cf)', value: 'cf', description: 'Configure Coinflip win odds' }
-                ]);
+        // --- SET WAGER COMMAND ---
+        if (['setwager', 'sw'].includes(command)) {
+            const targetUser = message.mentions.users.first();
+            const rawAmount = args[1];
 
-            const row = new ActionRowBuilder().addComponents(selectMenu);
+            if (!targetUser || !rawAmount) {
+                await message.reply(`❌ **Usage:** \`${prefix}setwager @user <amount>\``);
+                return true;
+            }
 
-            await message.reply({
-                content: '⚙️ **Admin Game Odds Configurator:** Select a game below:',
-                components: [row]
-            });
+            const wagerAmount = parseAmount(rawAmount);
+            if (isNaN(wagerAmount) || wagerAmount < 0) {
+                await message.reply('❌ **Invalid wager amount.**');
+                return true;
+            }
 
+            await getOrCreateUser(targetUser.id, targetUser.username);
+
+            const { error } = await supabase.from('balances').upsert({
+                user_id: targetUser.id,
+                username: targetUser.username,
+                wager_required: wagerAmount
+            }, { onConflict: 'user_id' });
+
+            if (error) throw error;
+
+            await message.reply(`✅ Updated ${targetUser.username}'s wager requirement to **$${wagerAmount.toLocaleString()}**.`);
+            return true;
+        }
+
+        // --- WIN COINFLIP CHANCE COMMAND ---
+        if (['wincoin', 'wincf'].includes(command)) {
+            const chance = parseFloat(args[0]);
+
+            if (isNaN(chance) || chance < 0 || chance > 100) {
+                await message.reply(`❌ **Usage:** \`${prefix}wincoin <0-100>\`\n*Example:* \`${prefix}wincoin 60\``);
+                return true;
+            }
+
+            const { error } = await supabase.from('game_settings').upsert({
+                game_name: 'cf',
+                win_chance: chance
+            }, { onConflict: 'game_name' });
+
+            if (error) throw error;
+
+            await message.reply(`🎰 **Coinflip win rate updated to ${chance}%!**`);
             return true;
         }
 
         return false;
     } catch (err) {
-        console.error('❌ Error in handleAdminCommands:', err);
-        await message.reply('❌ Error executing admin command.');
+        console.error('❌ Error in admin command:', err);
+        await message.reply('❌ An error occurred executing that admin command.');
         return true;
     }
 }
