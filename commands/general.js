@@ -10,7 +10,6 @@ async function handleGeneralCommands(command, args, message, prefix) {
         if (['start', 'help', 'commands'].includes(command)) {
             let bonusText = '';
 
-            // Check specifically for false or null/undefined
             if (user && user.claimed_starter_bonus !== true) {
                 await supabase.from('balances').update({
                     balance: (user?.balance || 0) + 1000000,
@@ -74,7 +73,59 @@ async function handleGeneralCommands(command, args, message, prefix) {
             return true;
         }
 
-        // --- REFERRAL DASHBOARD COMMAND (FIXES LOG ERROR) ---
+        // --- LINK MC IGN COMMAND ---
+        if (['link', 'linkmc', 'setign'].includes(command)) {
+            const mcIgn = args[0];
+
+            if (!mcIgn) {
+                await message.reply(`❌ **Usage:** \`${prefix}link <Minecraft_IGN>\``);
+                return true;
+            }
+
+            await supabase
+                .from('balances')
+                .update({ mc_username: mcIgn })
+                .eq('user_id', message.author.id);
+
+            await message.reply(`✅ **Successfully linked Minecraft IGN:** \`${mcIgn}\``);
+            return true;
+        }
+
+        // --- UNLINK MC IGN COMMAND ---
+        if (['unlink', 'unlinkmc'].includes(command)) {
+            if (!user?.mc_username) {
+                await message.reply('❌ You don\'t have any Minecraft IGN linked.');
+                return true;
+            }
+
+            const oldIgn = user.mc_username;
+            await supabase
+                .from('balances')
+                .update({ mc_username: null })
+                .eq('user_id', message.author.id);
+
+            await message.reply(`✅ **Unlinked Minecraft IGN:** \`${oldIgn}\``);
+            return true;
+        }
+
+        // --- WAGER STATUS COMMAND ---
+        if (['wager', 'wagerstatus', 'reqwager'].includes(command)) {
+            const wagerReq = user?.wager_required || 0;
+
+            const embed = new EmbedBuilder()
+                .setColor(wagerReq > 0 ? '#E67E22' : '#2ECC71')
+                .setTitle('🎰 Wager Requirement Status')
+                .setDescription(
+                    wagerReq > 0
+                        ? `You need to wager **$${wagerReq.toLocaleString()}** more before requesting a withdrawal.`
+                        : '🎉 **No wager requirement!** You are free to withdraw your balance.'
+                );
+
+            await message.reply({ embeds: [embed] });
+            return true;
+        }
+
+        // --- REFERRAL DASHBOARD COMMAND ---
         if (['ref', 'referral', 'referrals'].includes(command)) {
             const unclaimed = user?.unclaimed_ref_rewards || 0;
 
@@ -200,7 +251,6 @@ async function handleGeneralCommands(command, args, message, prefix) {
                 return true;
             }
 
-            // Deduct balance upfront
             await supabase.from('balances').update({
                 balance: user.balance - amount
             }).eq('user_id', message.author.id);
