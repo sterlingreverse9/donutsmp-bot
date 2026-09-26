@@ -1,9 +1,8 @@
 const supabase = require('../config/supabase');
-const ADMIN_ID = '1264564384508940298';
 const { parseAmount, getOrCreateUser } = require('../utils/helpers');
 const { EmbedBuilder } = require('discord.js');
 
-const ADMIN_ID = '1453068990187438086';
+const ADMIN_ID = '1264564384508940298';
 
 async function handleUserCommands(command, args, message, prefix) {
     try {
