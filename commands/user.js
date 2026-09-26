@@ -22,14 +22,31 @@ async function handleUserCommands(command, args, message, prefix) {
                     '**Account & Cashier:**\n' +
                     `• \`${prefix}profile\` or \`${prefix}me\` - View your stats & history\n` +
                     `• \`${prefix}link <mc_ign>\` - Link your Minecraft IGN\n` +
+                    `• \`${prefix}unlink\` - Unlink your Minecraft IGN\n` +
                     `• \`${prefix}deposit <amount>\` - Deposit funds (Min: 1M)\n` +
                     `• \`${prefix}withdraw <amount>\` - Withdraw funds\n` +
                     `• \`${prefix}wager\` - Check remaining wager requirement\n` +
-                    `• \`${prefix}tip @user <amount>\` - Tip another player\n\n` +
+                    `• \`${prefix}tip @user <amount>\` - Transfer balance\n\n` +
                     '📞 **Need more help?** Contact **@piyushyadav83** for support!')
                 .setFooter({ text: 'Donut Bet Bot' });
 
             await message.reply({ embeds: [helpEmbed] });
+            return true;
+        }
+
+        // --- BALANCE COMMAND ---
+        if (['bal', 'balance'].includes(command)) {
+            const balEmbed = new EmbedBuilder()
+                .setColor('#2ECC71')
+                .setTitle(`💰 ${username}'s Balance`)
+                .addFields(
+                    { name: 'Balance', value: `$${(user.balance || 0).toLocaleString()}`, inline: true },
+                    { name: 'Rakeback', value: `$${(user.rakeback || 0).toLocaleString()}`, inline: true },
+                    { name: 'Wager Required', value: `$${(user.wager_required || 0).toLocaleString()}`, inline: true }
+                )
+                .setFooter({ text: 'Donut Bet Bot' });
+
+            await message.reply({ embeds: [balEmbed] });
             return true;
         }
 
@@ -51,6 +68,24 @@ async function handleUserCommands(command, args, message, prefix) {
             return true;
         }
 
+        // --- UNLINK MC COMMAND ---
+        if (['unlink'].includes(command)) {
+            if (!user.mc_ign) {
+                await message.reply('❌ You do not have any Minecraft IGN linked.');
+                return true;
+            }
+
+            const oldIgn = user.mc_ign;
+            await supabase.from('balances').upsert({
+                user_id: userId,
+                username: username,
+                mc_ign: null
+            }, { onConflict: 'user_id' });
+
+            await message.reply(`✅ **Unlinked Minecraft IGN:** \`${oldIgn}\``);
+            return true;
+        }
+
         // --- WAGER COMMAND ---
         if (['wager'].includes(command)) {
             const remaining = user.wager_required || 0;
@@ -60,13 +95,10 @@ async function handleUserCommands(command, args, message, prefix) {
 
         // --- PROFILE / ME COMMAND ---
         if (['profile', 'me'].includes(command)) {
-            // Fetch total profit loss & past history from logs
             const { data: logs } = await supabase.from('game_logs').select('*').eq('user_id', userId).order('created_at', { ascending: false }).limit(5);
             const { data: allLogs } = await supabase.from('game_logs').select('profit_loss').eq('user_id', userId);
 
             const totalPL = allLogs ? allLogs.reduce((acc, row) => acc + parseFloat(row.profit_loss || 0), 0) : 0;
-
-            // Fetch referrals
             const { data: refs } = await supabase.from('balances').select('user_id').eq('referred_by', userId);
 
             let historyText = logs && logs.length > 0 
@@ -77,7 +109,7 @@ async function handleUserCommands(command, args, message, prefix) {
                 .setColor('#9B59B6')
                 .setTitle(`👤 ${username}'s Profile`)
                 .addFields(
-                    { name: '🎮 Linked Minecraft IGN', value: user.mc_ign ? `\`${user.mc_ign}\`` : 'Not linked (`/link <ign>`)', inline: true },
+                    { name: '🎮 Linked Minecraft IGN', value: user.mc_ign ? `\`${user.mc_ign}\`` : 'Not Linked (`!link <ign>`)', inline: true },
                     { name: '💰 Bot Balance', value: `$${(user.balance || 0).toLocaleString()}`, inline: true },
                     { name: '🎰 Remaining Wager', value: `$${(user.wager_required || 0).toLocaleString()}`, inline: true },
                     { name: '📊 Total Wagered', value: `$${(user.total_wagered || 0).toLocaleString()}`, inline: true },
@@ -93,13 +125,13 @@ async function handleUserCommands(command, args, message, prefix) {
 
         // --- DEPOSIT COMMAND ---
         if (['deposit', 'depo'].includes(command)) {
-            const rawAmount = args[0];
-            const amount = parseAmount(rawAmount);
-
             if (!user.mc_ign) {
-                await message.reply(`❌ You must link your Minecraft IGN first using \`${prefix}link <mc ign>\` before depositing!`);
+                await message.reply(`❌ **You must link your Minecraft IGN first using \`${prefix}link <mc_ign>\` before depositing!**`);
                 return true;
             }
+
+            const rawAmount = args[0];
+            const amount = parseAmount(rawAmount);
 
             if (!amount || amount < 1000000) {
                 await message.reply(`❌ **Minimum deposit amount is $1,000,000 (1M).** Usage: \`${prefix}deposit 1m\``);
@@ -121,9 +153,10 @@ async function handleUserCommands(command, args, message, prefix) {
                 .setTitle(`💳 Deposit Request #${depoId}`)
                 .setDescription(`To complete your deposit of **$${amount.toLocaleString()}**:\n\n` +
                     `1. Pay **.fbfnch** in-game using: \`/pay .fbfnch ${amount}\`\n` +
-                    `2. Take an **uncropped screenshot** of the transaction.\n` +
-                    `3. Type \`${prefix}paid\` and attach/send your screenshot in this channel.\n\n` +
+                    `2. Take an **uncropped screenshot** of the payment transaction.\n` +
+                    `3. Type \`${prefix}paid\` and attach your screenshot in this chat.\n\n` +
                     `*Need to cancel? Type \`${prefix}cancel\`*`)
+                .addFields({ name: 'Linked IGN', value: `\`${user.mc_ign}\``, inline: true })
                 .setFooter({ text: 'Donut Bet Bot' });
 
             await message.reply({ embeds: [depoEmbed] });
@@ -141,17 +174,16 @@ async function handleUserCommands(command, args, message, prefix) {
                 .single();
 
             if (!activeDepo) {
-                await message.reply(`❌ You are not doing a deposit right now. You can start one using \`${prefix}deposit <amount>\``);
+                await message.reply(`❌ You are not doing a deposit right now. Start one using \`${prefix}deposit <amount>\``);
                 return true;
             }
 
             const attachment = message.attachments.first();
             if (!attachment) {
-                await message.reply('❌ **Please submit an uncropped screenshot of your payment along with `!paid`, or upload it now!** (Or type `!cancel` to cancel)');
+                await message.reply('❌ **Please submit an uncropped screenshot of your payment along with `!paid`!** (Or type `!cancel` to cancel)');
                 return true;
             }
 
-            // Update status & notify admin
             await supabase.from('pending_deposits').update({
                 status: 'pending_approval',
                 screenshot_url: attachment.url
@@ -159,7 +191,6 @@ async function handleUserCommands(command, args, message, prefix) {
 
             await message.reply(`✅ **Deposit proof submitted!** ID: \`${activeDepo.id}\`. Please wait while our staff verifies your payment.`);
 
-            // Send DM to Admin
             try {
                 const adminUser = await message.client.users.fetch(ADMIN_ID);
                 const adminEmbed = new EmbedBuilder()
@@ -174,9 +205,7 @@ async function handleUserCommands(command, args, message, prefix) {
                     .setFooter({ text: `Approve: !approvedepo ${activeDepo.id} \vert{} Deny: !denydepo ${activeDepo.id}` });
 
                 await adminUser.send({ embeds: [adminEmbed] });
-            } catch (err) {
-                console.error('Failed to DM Admin:', err);
-            }
+            } catch (err) {}
             return true;
         }
 
@@ -202,13 +231,13 @@ async function handleUserCommands(command, args, message, prefix) {
 
         // --- WITHDRAW COMMAND ---
         if (['withdraw', 'wd'].includes(command)) {
-            const rawAmount = args[0];
-            const amount = parseAmount(rawAmount);
-
             if (!user.mc_ign) {
-                await message.reply(`❌ You must link your Minecraft IGN first using \`${prefix}link <mc ign>\` before withdrawing!`);
+                await message.reply(`❌ **You must link your Minecraft IGN first using \`${prefix}link <mc_ign>\` before withdrawing!**`);
                 return true;
             }
+
+            const rawAmount = args[0];
+            const amount = parseAmount(rawAmount);
 
             if (!amount || amount <= 0) {
                 await message.reply(`❌ **Invalid withdrawal amount.** Usage: \`${prefix}withdraw <amount>\``);
@@ -227,7 +256,6 @@ async function handleUserCommands(command, args, message, prefix) {
 
             const wdId = 'WD-' + Math.floor(100000 + Math.random() * 900000);
 
-            // Temporarily deduct balance during pending confirmation
             await supabase.from('balances').upsert({
                 user_id: userId,
                 username: username,
@@ -264,7 +292,6 @@ async function handleUserCommands(command, args, message, prefix) {
             await supabase.from('pending_withdrawals').update({ status: 'pending_approval' }).eq('id', activeWd.id);
             await message.reply(`✅ **Withdrawal request submitted!** (ID: \`${activeWd.id}\`). Staff will pay you in-game shortly.`);
 
-            // Notify Admin
             try {
                 const adminUser = await message.client.users.fetch(ADMIN_ID);
                 const adminEmbed = new EmbedBuilder()
@@ -275,7 +302,7 @@ async function handleUserCommands(command, args, message, prefix) {
                         { name: 'MC IGN', value: `${user.mc_ign}`, inline: true },
                         { name: 'Amount', value: `$${activeWd.amount.toLocaleString()}`, inline: true }
                     )
-                    .setFooter({ text: `Approve: /approvewd ${activeWd.id} | Deny: /declinewd ${activeWd.id}` });
+                    .setFooter({ text: `Approve: !approvewd ${activeWd.id} | Deny: !declinewd ${activeWd.id}` });
 
                 await adminUser.send({ embeds: [adminEmbed] });
             } catch (err) {}
