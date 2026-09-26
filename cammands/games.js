@@ -89,8 +89,8 @@ async function handleGameCommands(command, args, message, prefix) {
 
         return false;
     } catch (err) {
-        console.error('❌ Error inside handleGameCommands:', err);
-        await message.reply('❌ Failed to process game command. Check bot logs.');
+        console.error('❌ Error in handleGameCommands:', err);
+        await message.reply('❌ Error processing game command.');
         return true;
     }
 }
