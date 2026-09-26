@@ -31,7 +31,11 @@ async function handleGeneralCommands(command, args, message, prefix) {
 
             const totalRefs = refList ? refList.length : 0;
             const refNames = refList && refList.length > 0
-                ? refList.map((r, idx) => `${idx + 1}. **${r.username \vert{}\vert{} 'User'}** (${r.ref_reward_claimed ? '✅ Qualified' : '⏳ Pending'})`).join('\n')
+                ? refList.map((r, idx) => {
+                    const status = r.ref_reward_claimed ? '✅ Qualified' : '⏳ Pending';
+                    const name = r.username || 'User';
+                    return `${idx + 1}. **${name}** (${status})`;
+                }).join('\n')
                 : 'No referred users yet.';
 
             const embed = new EmbedBuilder()
