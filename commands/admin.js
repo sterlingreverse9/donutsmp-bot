@@ -1,14 +1,191 @@
 const supabase = require('../config/supabase');
 const { parseAmount, getOrCreateUser } = require('../utils/helpers');
 const { EmbedBuilder } = require('discord.js');
+const botState = require('../config/botState');
+
+// Set your Admin Discord ID here for strict permission checks
+const ADMIN_ID = '1453068990187438086';
 
 async function handleAdminCommands(command, args, message, prefix) {
     try {
-        const isAdmin = message.member?.permissions.has('Administrator');
-        if (!isAdmin) return false;
+        const isOwner = message.author.id === ADMIN_ID;
+        const isAdmin = isOwner || message.member?.permissions.has('Administrator');
+
+        // --- STARTBOT COMMAND ---
+        if (['startbot'].includes(command)) {
+            if (!isAdmin) return true;
+            botState.setBotStatus(true);
+            await supabase.from('game_settings').upsert({ game_name: 'bot_status', is_active: true }, { onConflict: 'game_name' });
+            await message.reply('🟢 **Bot has been turned ON.** All commands are now accessible.');
+            return true;
+        }
+
+        // --- STOPBOT COMMAND ---
+        if (['stopbot'].includes(command)) {
+            if (!isAdmin) return true;
+            botState.setBotStatus(false);
+            await supabase.from('game_settings').upsert({ game_name: 'bot_status', is_active: false }, { onConflict: 'game_name' });
+            await message.reply('🔴 **Bot has been turned OFF.** Commands are disabled for regular users.');
+            return true;
+        }
+
+        // --- WIN COINFLIP CHANCE COMMAND ---
+        if (['wincf', 'wincoin'].includes(command)) {
+            if (!isAdmin) {
+                await message.reply('❌ You do not have permission to use this command.');
+                return true;
+            }
+
+            const chance = parseFloat(args[0]);
+            if (isNaN(chance) || chance < 0 || chance > 100) {
+                await message.reply(`❌ **Usage:** \`${prefix}wincf <0-100>\`\n*Example:* \`${prefix}wincf 20\``);
+                return true;
+            }
+
+            const { error } = await supabase.from('game_settings').upsert({
+                game_name: 'cf',
+                win_chance: chance
+            }, { onConflict: 'game_name' });
+
+            if (error) throw error;
+
+            await message.reply(`🎰 **Coinflip win rate set to ${chance}%!**`);
+            return true;
+        }
+
+        // --- APPROVE DEPOSIT ---
+        if (['approvedepo', 'approvedeposit', 'appdepo'].includes(command)) {
+            if (!isAdmin) return true;
+            const depoId = args[0];
+            if (!depoId) {
+                await message.reply(`❌ **Usage:** \`${prefix}approvedepo <depo_id>\``);
+                return true;
+            }
+
+            const { data: depo } = await supabase.from('pending_deposits').select('*').eq('id', depoId).single();
+            if (!depo || depo.status !== 'pending_approval') {
+                await message.reply('❌ Invalid or non-pending deposit ID.');
+                return true;
+            }
+
+            const userData = await getOrCreateUser(depo.user_id, depo.username);
+            const newBal = (userData.balance || 0) + depo.amount;
+            const newWager = (userData.wager_required || 0) + depo.amount; // 1x wager condition
+
+            await supabase.from('balances').upsert({
+                user_id: depo.user_id,
+                username: depo.username,
+                balance: newBal,
+                wager_required: newWager
+            }, { onConflict: 'user_id' });
+
+            await supabase.from('pending_deposits').update({ status: 'approved' }).eq('id', depoId);
+
+            await message.reply(`✅ Approved Deposit \`${depoId}\` for $${depo.amount.toLocaleString()}!`);
+
+            // DM Depositer
+            try {
+                const userObj = await message.client.users.fetch(depo.user_id);
+                await userObj.send(`✅ **Your deposit of $${depo.amount.toLocaleString()} (ID:${depoId}) has been approved!** You can now play.`);
+            } catch (err) {
+                console.error('Could not DM user:', err);
+            }
+            return true;
+        }
+
+        // --- DENY DEPOSIT ---
+        if (['denydepo', 'denydeposit'].includes(command)) {
+            if (!isAdmin) return true;
+            const depoId = args[0];
+            if (!depoId) {
+                await message.reply(`❌ **Usage:** \`${prefix}denydepo <depo_id>\``);
+                return true;
+            }
+
+            const { data: depo } = await supabase.from('pending_deposits').select('*').eq('id', depoId).single();
+            if (!depo || depo.status !== 'pending_approval') {
+                await message.reply('❌ Invalid or non-pending deposit ID.');
+                return true;
+            }
+
+            await supabase.from('pending_deposits').update({ status: 'denied' }).eq('id', depoId);
+            await message.reply(`🚫 Denied Deposit \`${depoId}\`.`);
+
+            try {
+                const userObj = await message.client.users.fetch(depo.user_id);
+                await userObj.send(`❌ **Your deposit (ID: ${depoId}) was declined.** Please contact admin @piyushyadav83 for assistance.`);
+            } catch (err) {
+                console.error('Could not DM user:', err);
+            }
+            return true;
+        }
+
+        // --- APPROVE WITHDRAWAL ---
+        if (['approvewd', 'appwd'].includes(command)) {
+            if (!isAdmin) return true;
+            const wdId = args[0];
+            if (!wdId) {
+                await message.reply(`❌ **Usage:** \`${prefix}approvewd <wd_id>\``);
+                return true;
+            }
+
+            const { data: wd } = await supabase.from('pending_withdrawals').select('*').eq('id', wdId).single();
+            if (!wd || wd.status !== 'pending_approval') {
+                await message.reply('❌ Invalid or non-pending withdrawal ID.');
+                return true;
+            }
+
+            await supabase.from('pending_withdrawals').update({ status: 'approved' }).eq('id', wdId);
+            await message.reply(`✅ Approved Withdrawal \`${wdId}\`.`);
+
+            try {
+                const userObj = await message.client.users.fetch(wd.user_id);
+                await userObj.send(`✅ **Your withdrawal of $${wd.amount.toLocaleString()} has been approved!** You received your money in-game. Please drop a vouch!`);
+            } catch (err) {}
+
+            // Public Announcement
+            if (message.channel) {
+                await message.channel.send(`🎉 **Withdrawal Approved!** <@${wd.user_id}> successfully withdrew **$${wd.amount.toLocaleString()}**!`);
+            }
+            return true;
+        }
+
+        // --- DENY WITHDRAWAL ---
+        if (['declinewd', 'denywd'].includes(command)) {
+            if (!isAdmin) return true;
+            const wdId = args[0];
+            if (!wdId) {
+                await message.reply(`❌ **Usage:** \`${prefix}declinewd <wd_id>\``);
+                return true;
+            }
+
+            const { data: wd } = await supabase.from('pending_withdrawals').select('*').eq('id', wdId).single();
+            if (!wd || wd.status !== 'pending_approval') {
+                await message.reply('❌ Invalid or non-pending withdrawal ID.');
+                return true;
+            }
+
+            // Refund balance on decline
+            const userData = await getOrCreateUser(wd.user_id, wd.username);
+            await supabase.from('balances').upsert({
+                user_id: wd.user_id,
+                username: wd.username,
+                balance: (userData.balance || 0) + wd.amount
+            }, { onConflict: 'user_id' });
+
+            await supabase.from('pending_withdrawals').update({ status: 'denied' }).eq('id', wdId);
+            await message.reply(`🚫 Declined Withdrawal \`${wdId}\`. Funds refunded to user balance.`);
+
+            try {
+                const userObj = await message.client.users.fetch(wd.user_id);
+                await userObj.send(`❌ **Your withdrawal of $${wd.amount.toLocaleString()} (ID:${wdId}) was declined.** Funds have been restored to your bot balance. Contact @piyushyadav83 for help.`);
+            } catch (err) {}
+            return true;
+        }
 
         // --- ADDBAL COMMAND ---
         if (['addbal', 'addbalance'].includes(command)) {
+            if (!isAdmin) return true;
             const targetUser = message.mentions.users.first();
             const rawAmount = args[1];
 
@@ -27,14 +204,12 @@ async function handleAdminCommands(command, args, message, prefix) {
             const newBalance = (userData.balance || 0) + amount;
             const newWager = (userData.wager_required || 0) + amount;
 
-            const { error } = await supabase.from('balances').upsert({
+            await supabase.from('balances').upsert({
                 user_id: targetUser.id,
                 username: targetUser.username,
                 balance: newBalance,
                 wager_required: newWager
             }, { onConflict: 'user_id' });
-
-            if (error) throw error;
 
             await message.reply(`✅ Added **$${amount.toLocaleString()}** to ${targetUser.username}'s balance! (Wager Req: +$${amount.toLocaleString()})`);
             return true;
@@ -42,6 +217,7 @@ async function handleAdminCommands(command, args, message, prefix) {
 
         // --- DEDUCTBAL COMMAND ---
         if (['deductbal', 'removebal'].includes(command)) {
+            if (!isAdmin) return true;
             const targetUser = message.mentions.users.first();
             const rawAmount = args[1];
 
@@ -59,20 +235,19 @@ async function handleAdminCommands(command, args, message, prefix) {
             const userData = await getOrCreateUser(targetUser.id, targetUser.username);
             const newBalance = Math.max(0, (userData.balance || 0) - amount);
 
-            const { error } = await supabase.from('balances').upsert({
+            await supabase.from('balances').upsert({
                 user_id: targetUser.id,
                 username: targetUser.username,
                 balance: newBalance
             }, { onConflict: 'user_id' });
 
-            if (error) throw error;
-
-            await message.reply(`✅ Deducted **$${amount.toLocaleString()}** from ${targetUser.username}'s balance! New Balance: **$${newBalance.toLocaleString()}**`);
+            await message.reply(`✅ Deducted **$${amount.toLocaleString()}** from ${targetUser.username}'s balance!`);
             return true;
         }
 
         // --- SET WAGER COMMAND ---
         if (['setwager', 'sw'].includes(command)) {
+            if (!isAdmin) return true;
             const targetUser = message.mentions.users.first();
             const rawAmount = args[1];
 
@@ -89,86 +264,20 @@ async function handleAdminCommands(command, args, message, prefix) {
 
             await getOrCreateUser(targetUser.id, targetUser.username);
 
-            const { error } = await supabase.from('balances').upsert({
+            await supabase.from('balances').upsert({
                 user_id: targetUser.id,
                 username: targetUser.username,
                 wager_required: wagerAmount
             }, { onConflict: 'user_id' });
 
-            if (error) throw error;
-
             await message.reply(`✅ Updated ${targetUser.username}'s wager requirement to **$${wagerAmount.toLocaleString()}**.`);
-            return true;
-        }
-
-        // --- WIN COINFLIP CHANCE COMMAND ---
-        if (['wincoin', 'wincf'].includes(command)) {
-            const chance = parseFloat(args[0]);
-
-            if (isNaN(chance) || chance < 0 || chance > 100) {
-                await message.reply(`❌ **Usage:** \`${prefix}wincoin <0-100>\`\n*Example:* \`${prefix}wincoin 60\``);
-                return true;
-            }
-
-            const { error } = await supabase.from('game_settings').upsert({
-                game_name: 'cf',
-                win_chance: chance
-            }, { onConflict: 'game_name' });
-
-            if (error) throw error;
-
-            await message.reply(`🎰 **Coinflip win rate updated to ${chance}%!**`);
-            return true;
-        }
-
-        // --- TIP / PAY COMMAND ---
-        if (['pay', 'tip'].includes(command)) {
-            const targetUser = message.mentions.users.first();
-            const rawAmount = args[1];
-
-            if (!targetUser || targetUser.id === message.author.id) {
-                await message.reply(`❌ **Usage:** \`${prefix}tip @user <amount>\``);
-                return true;
-            }
-
-            const amount = parseAmount(rawAmount);
-            if (!amount || amount <= 0) {
-                await message.reply('❌ **Invalid amount.**');
-                return true;
-            }
-
-            const sender = await getOrCreateUser(message.author.id, message.author.username);
-            if ((sender.balance || 0) < amount) {
-                await message.reply(`❌ Insufficient balance! Your balance: **$${(sender.balance || 0).toLocaleString()}**`);
-                return true;
-            }
-
-            const receiver = await getOrCreateUser(targetUser.id, targetUser.username);
-
-            // Deduct balance from sender
-            await supabase.from('balances').upsert({
-                user_id: message.author.id,
-                username: message.author.username,
-                balance: sender.balance - amount
-            }, { onConflict: 'user_id' });
-
-            // Add balance & wager requirement to recipient
-            await supabase.from('balances').upsert({
-                user_id: targetUser.id,
-                username: targetUser.username,
-                balance: (receiver.balance || 0) + amount,
-                wager_required: (receiver.wager_required || 0) + amount
-            }, { onConflict: 'user_id' });
-
-            await message.reply(`💸 You tipped **$${amount.toLocaleString()}** to ${targetUser.username}!`);
             return true;
         }
 
         return false;
     } catch (err) {
         console.error('❌ Error in admin command:', err);
-        await message.reply('❌ An error occurred executing that command.');
-        return true;
+        return false;
     }
 }
 
