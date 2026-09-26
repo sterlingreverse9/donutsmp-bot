@@ -6,35 +6,65 @@ const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder
 module.exports = (client) => {
     client.on('interactionCreate', async (interaction) => {
         try {
-            // --- CRITICAL FIX: IMMEDIATE ACKNOWLEDGEMENT TO PREVENT DISCORD TIMEOUTS ---
+            // Immediate acknowledgment to prevent Discord timeout errors
             if (interaction.isButton() || interaction.isStringSelectMenu()) {
                 if (!interaction.customId.startsWith('win_custom_btn_')) {
                     await interaction.deferUpdate().catch(() => {});
                 }
             }
 
-            // --- SLASH COMMANDS HANDLER (/start, /help, etc.) ---
+            // --- SLASH COMMANDS HANDLER (/start, /help) ---
             if (interaction.isChatInputCommand()) {
                 const { commandName, user } = interaction;
 
-                if (commandName === 'start') {
+                if (['start', 'help'].includes(commandName)) {
                     await interaction.deferReply().catch(() => {});
                     const dbUser = await getOrCreateUser(user.id, user.username);
 
                     let bonusMsg = '';
-                    if (!dbUser?.claimed_starter_bonus) {
+                    // Check if starter bonus is not claimed or if newly created user
+                    if (dbUser?.isNewUser || (dbUser && !dbUser.claimed_starter_bonus)) {
                         await supabase.from('balances').update({
                             balance: (dbUser?.balance || 0) + 1000000,
                             claimed_starter_bonus: true
                         }).eq('user_id', user.id);
 
-                        bonusMsg = '\n\n🎉 **First-Time Bonus!** You received **$1,000,000** starter balance!';
+                        bonusMsg = '\n\n🎉 **First-Time Bonus Claimed!** You received **$1,000,000** starter balance!';
                     }
 
                     const embed = new EmbedBuilder()
                         .setColor('#F1C40F')
                         .setTitle('🍩 Welcome to Donut Bet!')
                         .setDescription(`Use \`/help\` or \`!help\` to view all available commands.${bonusMsg}`)
+                        .addFields(
+                            {
+                                name: '💰 Account Commands',
+                                value: [
+                                    '`/bal` - Check balance',
+                                    '`/ref` - Referral dashboard',
+                                    '`/linkref <referrer_id>` - Link referrer',
+                                    '`/link <MC_IGN>` - Link MC IGN',
+                                    '`/unlink` - Unlink MC IGN',
+                                    '`/wager` - Check wager status',
+                                    '`/rakeback` - Claim loss rakeback',
+                                    '`/pay @user <amount>` - Transfer balance'
+                                ].join('\n')
+                            },
+                            {
+                                name: '📥 Banking',
+                                value: [
+                                    '`/depo <amount>` - Request deposit',
+                                    '`/withdraw <amount>` - Request withdrawal'
+                                ].join('\n')
+                            },
+                            {
+                                name: '🎲 Available Games',
+                                value: [
+                                    '`/cf <heads/tails> <amount>` - Coinflip',
+                                    '`/limbo <multiplier> <amount>` - Limbo'
+                                ].join('\n')
+                            }
+                        )
                         .setFooter({ text: 'Donut Bet Bot' });
 
                     await interaction.editReply({ embeds: [embed] }).catch(() => {});
@@ -46,13 +76,11 @@ module.exports = (client) => {
             if (interaction.isButton()) {
                 const { customId, user } = interaction;
 
-                // 1. Referral Reward Claim
                 if (customId === 'claim_ref_rewards') {
                     await processRefClaim(user.id, interaction);
                     return;
                 }
 
-                // 2. Deposit "I Paid" Clicked
                 if (customId.startsWith('depo_paid_')) {
                     const amount = parseFloat(customId.split('_')[2]);
                     const { data: userData } = await supabase.from('balances').select('*').eq('user_id', user.id).single();
@@ -89,7 +117,6 @@ module.exports = (client) => {
                     return;
                 }
 
-                // 3. Admin Approve Deposit
                 if (customId.startsWith('admin_depo_approve_')) {
                     const [, , , targetUserId, rawAmount] = customId.split('_');
                     const amount = parseFloat(rawAmount);
@@ -97,7 +124,6 @@ module.exports = (client) => {
                     const { data: targetUser } = await supabase.from('balances').select('*').eq('user_id', targetUserId).single();
                     const newDepositCount = (targetUser?.deposit_count || 0) + 1;
 
-                    // 3x Referral Bonus on First 2 Deposits
                     if (targetUser?.referred_by && newDepositCount <= 2) {
                         const referrerReward = amount * 3;
                         const { data: referrer } = await supabase.from('balances').select('*').eq('user_id', targetUser.referred_by).single();
@@ -127,7 +153,6 @@ module.exports = (client) => {
                     return;
                 }
 
-                // 4. Admin Decline Deposit
                 if (customId.startsWith('admin_depo_decline_')) {
                     const [, , , targetUserId, rawAmount] = customId.split('_');
                     const amount = parseFloat(rawAmount);
@@ -141,7 +166,6 @@ module.exports = (client) => {
                     return;
                 }
 
-                // 5. Admin Approve Withdrawal ("I Paid")
                 if (customId.startsWith('admin_withdraw_approve_')) {
                     const [, , , targetUserId, rawAmount] = customId.split('_');
                     const amount = parseFloat(rawAmount);
@@ -155,7 +179,6 @@ module.exports = (client) => {
                     return;
                 }
 
-                // 6. Admin Decline Withdrawal
                 if (customId.startsWith('admin_withdraw_decline_')) {
                     const [, , , targetUserId, rawAmount] = customId.split('_');
                     const amount = parseFloat(rawAmount);
@@ -172,7 +195,6 @@ module.exports = (client) => {
                     return;
                 }
 
-                // 7. Custom Win % Modal Trigger
                 if (customId.startsWith('win_custom_btn_')) {
                     const game = customId.replace('win_custom_btn_', '');
                     const modal = new ModalBuilder()
@@ -191,14 +213,13 @@ module.exports = (client) => {
                     return;
                 }
 
-                // 8. Win Odds Option Buttons
                 if (customId.startsWith('set_win_chance_')) {
                     const parts = customId.split('_');
                     const game = parts[3];
                     const chance = parseFloat(parts[4]);
 
                     await supabase.from('game_settings').upsert({ game_name: game, win_chance: chance });
-                    await interaction.editReply({ content: `⚙️ **Updated ${game.toUpperCase()} win chance to${chance}%**`, components: [] }).catch(() => {});
+                    await interaction.editReply({ content: `⚙️ **Updated ${game.toUpperCase()} win chance to ${chance}%**`, components: [] }).catch(() => {});
                     return;
                 }
             }
@@ -240,7 +261,7 @@ module.exports = (client) => {
                     }
 
                     await supabase.from('game_settings').upsert({ game_name: game, win_chance: chance });
-                    await interaction.reply({ content: `⚙️ **Custom win chance set to ${chance}\% for${game.toUpperCase()}!**`, ephemeral: true });
+                    await interaction.reply({ content: `⚙️ **Custom win chance set to ${chance}% for ${game.toUpperCase()}!**`, ephemeral: true });
                 }
             }
         } catch (err) {
