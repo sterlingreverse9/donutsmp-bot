@@ -1,15 +1,43 @@
 const supabase = require('../config/supabase');
 const { processRefClaim } = require('../commands/general');
 const { getOrCreateUser } = require('../utils/helpers');
-const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
+const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder } = require('discord.js');
 
 module.exports = (client) => {
     client.on('interactionCreate', async (interaction) => {
         try {
+            const ADMIN_ID = process.env.ADMIN_ID || process.env.ADMIN_DISCORD_ID;
+
             // --- SLASH COMMANDS HANDLER ---
             if (interaction.isChatInputCommand()) {
                 const { commandName, user, options } = interaction;
                 await interaction.deferReply().catch(() => {});
+
+                // Slash Command: /win (Admin Only)
+                if (['win', 'setwin'].includes(commandName)) {
+                    if (user.id !== ADMIN_ID) {
+                        await interaction.editReply({ content: '❌ **Access Denied:** Only administrators can adjust game win odds.' });
+                        return;
+                    }
+
+                    const embed = new EmbedBuilder()
+                        .setColor('#9B59B6')
+                        .setTitle('⚙️ Admin Game Odds Configurator')
+                        .setDescription('Select a game below to modify its win probability percentage:');
+
+                    const selectMenu = new ActionRowBuilder().addComponents(
+                        new StringSelectMenuBuilder()
+                            .setCustomId('select_win_game')
+                            .setPlaceholder('Select a game to set win chances')
+                            .addOptions([
+                                { label: 'Coinflip (CF)', value: 'cf', description: 'Configure Coinflip win probability' },
+                                { label: 'Limbo', value: 'limbo', description: 'Configure Limbo win probability' }
+                            ])
+                    );
+
+                    await interaction.editReply({ embeds: [embed], components: [selectMenu] });
+                    return;
+                }
 
                 const dbUser = await getOrCreateUser(user.id, user.username);
 
@@ -102,52 +130,16 @@ module.exports = (client) => {
                     await interaction.editReply({ embeds: [embed] });
                     return;
                 }
+            }
 
-                // /ref
-                if (commandName === 'ref' || commandName === 'referral') {
-                    const unclaimed = dbUser?.unclaimed_ref_rewards || 0;
-                    const embed = new EmbedBuilder()
-                        .setColor('#F1C40F')
-                        .setTitle('👥 Referral Dashboard')
-                        .setDescription(`Share your User ID with friends to earn rewards!\nYour ID: \`${user.id}\``)
-                        .addFields(
-                            { name: 'Your Referrer', value: dbUser?.referred_by ? `<@${dbUser.referred_by}>` : 'None linked (`!linkref <id>`)' },
-                            { name: 'Unclaimed Rewards', value: `$${unclaimed.toLocaleString()}` }
-                        );
-
-                    const row = new ActionRowBuilder().addComponents(
-                        new ButtonBuilder()
-                            .setCustomId('claim_ref_rewards')
-                            .setLabel('Claim Rewards')
-                            .setStyle(ButtonStyle.Success)
-                            .setDisabled(unclaimed <= 0)
-                    );
-
-                    await interaction.editReply({ embeds: [embed], components: [row] });
-                    return;
-                }
-
-                // /rakeback
-                if (commandName === 'rakeback') {
-                    const currentRakeback = dbUser?.rakeback || 0;
-                    if (currentRakeback <= 0) {
-                        await interaction.editReply({ content: '❌ You have no rakeback to claim.' });
+            // --- SELECT MENU HANDLER (ADMIN-PROTECTED ODDS CONFIGURATOR) ---
+            if (interaction.isStringSelectMenu()) {
+                if (interaction.customId === 'select_win_game') {
+                    if (interaction.user.id !== ADMIN_ID) {
+                        await interaction.reply({ content: '❌ Access Denied.', ephemeral: true });
                         return;
                     }
 
-                    await supabase.from('balances').update({
-                        balance: (dbUser.balance || 0) + currentRakeback,
-                        rakeback: 0
-                    }).eq('user_id', user.id);
-
-                    await interaction.editReply({ content: `🎉 **Claimed $${currentRakeback.toLocaleString()} in Rakeback!** Funds added to your balance.` });
-                    return;
-                }
-            }
-
-            // --- SELECT MENU HANDLER ---
-            if (interaction.isStringSelectMenu()) {
-                if (interaction.customId === 'select_win_game') {
                     const selectedGame = interaction.values[0];
 
                     const presetRow = new ActionRowBuilder().addComponents(
@@ -175,8 +167,13 @@ module.exports = (client) => {
             if (interaction.isButton()) {
                 const { customId, user } = interaction;
 
-                // Handle Custom Modal BEFORE deferring!
+                // Modal Trigger for Odds Configuration (Admin Only)
                 if (customId.startsWith('win_custom_btn_')) {
+                    if (user.id !== ADMIN_ID) {
+                        await interaction.reply({ content: '❌ Access Denied.', ephemeral: true });
+                        return;
+                    }
+
                     const game = customId.replace('win_custom_btn_', '');
                     const modal = new ModalBuilder()
                         .setCustomId(`win_custom_modal_${game}`)
@@ -194,19 +191,14 @@ module.exports = (client) => {
                     return;
                 }
 
-                // Defer for non-modal buttons
+                // Defer update for background button events
                 await interaction.deferUpdate().catch(() => {});
 
-                if (customId === 'claim_ref_rewards') {
-                    await processRefClaim(user.id, interaction);
-                    return;
-                }
-
+                // Player Clicks "I Paid" Deposit Button
                 if (customId.startsWith('depo_paid_')) {
                     const amount = parseFloat(customId.split('_')[2]);
                     const { data: userData } = await supabase.from('balances').select('*').eq('user_id', user.id).single();
 
-                    const ADMIN_ID = process.env.ADMIN_ID || process.env.ADMIN_DISCORD_ID;
                     const adminUser = await client.users.fetch(ADMIN_ID).catch(() => null);
 
                     if (adminUser) {
@@ -234,11 +226,14 @@ module.exports = (client) => {
                         await adminUser.send({ embeds: [adminEmbed], components: [adminRow] }).catch(console.error);
                     }
 
-                    await interaction.followUp({ content: '✅ Admin has been notified of your payment! Your deposit will be processed shortly.', ephemeral: true }).catch(() => {});
+                    await interaction.followUp({ content: '✅ **Admin notified!** Your deposit request is under review.', ephemeral: true }).catch(() => {});
                     return;
                 }
 
+                // Admin Approves Deposit
                 if (customId.startsWith('admin_depo_approve_')) {
+                    if (user.id !== ADMIN_ID) return;
+
                     const [, , , targetUserId, rawAmount] = customId.split('_');
                     const amount = parseFloat(rawAmount);
 
@@ -274,7 +269,10 @@ module.exports = (client) => {
                     return;
                 }
 
+                // Admin Declines Deposit
                 if (customId.startsWith('admin_depo_decline_')) {
+                    if (user.id !== ADMIN_ID) return;
+
                     const [, , , targetUserId, rawAmount] = customId.split('_');
                     const amount = parseFloat(rawAmount);
 
@@ -287,7 +285,10 @@ module.exports = (client) => {
                     return;
                 }
 
+                // Admin Approves Withdrawal
                 if (customId.startsWith('admin_withdraw_approve_')) {
+                    if (user.id !== ADMIN_ID) return;
+
                     const [, , , targetUserId, rawAmount] = customId.split('_');
                     const amount = parseFloat(rawAmount);
 
@@ -300,7 +301,10 @@ module.exports = (client) => {
                     return;
                 }
 
+                // Admin Declines Withdrawal
                 if (customId.startsWith('admin_withdraw_decline_')) {
+                    if (user.id !== ADMIN_ID) return;
+
                     const [, , , targetUserId, rawAmount] = customId.split('_');
                     const amount = parseFloat(rawAmount);
 
@@ -316,7 +320,10 @@ module.exports = (client) => {
                     return;
                 }
 
+                // Admin Preset Win Chance Click
                 if (customId.startsWith('set_win_chance_')) {
+                    if (user.id !== ADMIN_ID) return;
+
                     const parts = customId.split('_');
                     const game = parts[3];
                     const chance = parseFloat(parts[4]);
@@ -330,6 +337,8 @@ module.exports = (client) => {
             // --- MODAL SUBMIT HANDLER ---
             if (interaction.isModalSubmit()) {
                 if (interaction.customId.startsWith('win_custom_modal_')) {
+                    if (interaction.user.id !== ADMIN_ID) return;
+
                     const game = interaction.customId.replace('win_custom_modal_', '');
                     const chance = parseFloat(interaction.fields.getTextInputValue('win_percent_input'));
 
