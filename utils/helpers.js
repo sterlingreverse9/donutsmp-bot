@@ -4,19 +4,23 @@ async function getOrCreateUser(userId, username) {
     let { data: user } = await supabase.from('balances').select('*').eq('user_id', userId).single();
 
     if (!user) {
+        // Automatically grant $1,000,000 on user creation
         const { data: newUser, error } = await supabase.from('balances').insert({
             user_id: userId,
             username: username || 'Unknown',
-            balance: 0,
-            claimed_starter_bonus: false,
+            balance: 1000000,
+            claimed_starter_bonus: true,
             rakeback: 0,
             wager_required: 0,
             unclaimed_ref_rewards: 0,
             deposit_count: 0
         }).select().single();
 
-        if (error) console.error('Error creating user:', error);
-        return newUser;
+        if (error) {
+            console.error('Error creating user:', error);
+            return null;
+        }
+        return { ...newUser, isNewUser: true };
     }
 
     return user;
