@@ -9,9 +9,13 @@ module.exports = (client) => {
             if (interaction.isButton()) {
                 const { customId, user } = interaction;
 
+                // Acknowledge interaction immediately to prevent "Donut bet bot didn't respond in time"
+                if (!customId.startsWith('win_custom_btn_')) {
+                    await interaction.deferUpdate().catch(() => {});
+                }
+
                 // 1. Claim Referral Rewards Button
                 if (customId === 'claim_ref_rewards') {
-                    await interaction.deferReply({ ephemeral: true });
                     await processRefClaim(user.id, interaction);
                     return;
                 }
@@ -19,7 +23,6 @@ module.exports = (client) => {
                 // 2. Player Clicked "I Paid" for Deposit
                 if (customId.startsWith('depo_paid_')) {
                     const amount = parseFloat(customId.split('_')[2]);
-                    await interaction.deferReply({ ephemeral: true });
 
                     const { data: userData } = await supabase.from('balances').select('*').eq('user_id', user.id).single();
 
@@ -47,8 +50,8 @@ module.exports = (client) => {
                             .setStyle(ButtonStyle.Danger)
                     );
 
-                    await adminUser.send({ embeds: [adminEmbed], components: [adminRow] });
-                    await interaction.followUp({ content: '✅ Admin has been notified of your payment! Your deposit will be processed shortly.', ephemeral: true });
+                    await adminUser.send({ embeds: [adminEmbed], components: [adminRow] }).catch(console.error);
+                    await interaction.followUp({ content: '✅ Admin has been notified of your payment! Your deposit will be processed shortly.', ephemeral: true }).catch(() => {});
                     return;
                 }
 
@@ -59,11 +62,9 @@ module.exports = (client) => {
 
                     const { data: targetUser } = await supabase.from('balances').select('*').eq('user_id', targetUserId).single();
                     const newDepositCount = (targetUser?.deposit_count || 0) + 1;
-                    let referrerReward = 0;
 
-                    // Apply 3x referral deposit bonus on first 2 deposits
                     if (targetUser?.referred_by && newDepositCount <= 2) {
-                        referrerReward = amount * 3;
+                        const referrerReward = amount * 3;
                         const { data: referrer } = await supabase.from('balances').select('*').eq('user_id', targetUser.referred_by).single();
                         if (referrer) {
                             await supabase
@@ -73,7 +74,6 @@ module.exports = (client) => {
                         }
                     }
 
-                    // Add deposit amount to balance & add 1x wager requirement
                     await supabase
                         .from('balances')
                         .update({
@@ -83,9 +83,8 @@ module.exports = (client) => {
                         })
                         .eq('user_id', targetUserId);
 
-                    await interaction.update({ content: `✅ **Accepted Deposit for <@${targetUserId}> ($${amount.toLocaleString()})!**`, embeds: [], components: [] });
+                    await interaction.editReply({ content: `✅ **Accepted Deposit for <@${targetUserId}> ($${amount.toLocaleString()})!**`, embeds: [], components: [] }).catch(() => {});
 
-                    // DM user confirmation
                     try {
                         const player = await client.users.fetch(targetUserId);
                         await player.send(`🎉 **Deposit Approved!** Your deposit of **$${amount.toLocaleString()}** has been accepted!`);
@@ -98,7 +97,7 @@ module.exports = (client) => {
                     const [, , , targetUserId, rawAmount] = customId.split('_');
                     const amount = parseFloat(rawAmount);
 
-                    await interaction.update({ content: `❌ **Declined Deposit for <@${targetUserId}> ($${amount.toLocaleString()}).**`, embeds: [], components: [] });
+                    await interaction.editReply({ content: `❌ **Declined Deposit for <@${targetUserId}> ($${amount.toLocaleString()}).**`, embeds: [], components: [] }).catch(() => {});
 
                     try {
                         const player = await client.users.fetch(targetUserId);
@@ -112,18 +111,16 @@ module.exports = (client) => {
                     const [, , , targetUserId, rawAmount] = customId.split('_');
                     const amount = parseFloat(rawAmount);
 
-                    await interaction.update({ content: `✅ **Paid Withdrawal for <@${targetUserId}> ($${amount.toLocaleString()})!**`, embeds: [], components: [] });
+                    await interaction.editReply({ content: `✅ **Paid Withdrawal for <@${targetUserId}> ($${amount.toLocaleString()})!**`, embeds: [], components: [] }).catch(() => {});
 
-                    // Notify user in DM to leave a vouch
                     try {
                         const player = await client.users.fetch(targetUserId);
                         await player.send(`🎉 Your withdrawal of **$${amount.toLocaleString()}** has been paid in-game! Please leave a vouch in the channel!`);
                     } catch (e) { console.error('DM Error:', e); }
 
-                    // Public channel announcement
                     const announcementChannelId = process.env.ANNOUNCEMENT_CHANNEL_ID;
                     if (announcementChannelId) {
-                        const channel = await client.channels.fetch(announcementChannelId);
+                        const channel = await client.channels.fetch(announcementChannelId).catch(() => null);
                         if (channel) {
                             await channel.send(`📢 **Withdrawal Notice:** <@${targetUserId}> successfully withdrew **$${amount.toLocaleString()}** and was paid in-game!`);
                         }
@@ -136,11 +133,10 @@ module.exports = (client) => {
                     const [, , , targetUserId, rawAmount] = customId.split('_');
                     const amount = parseFloat(rawAmount);
 
-                    // Refund user balance
                     const { data: targetUser } = await supabase.from('balances').select('*').eq('user_id', targetUserId).single();
                     await supabase.from('balances').update({ balance: (targetUser?.balance || 0) + amount }).eq('user_id', targetUserId);
 
-                    await interaction.update({ content: `❌ **Declined Withdrawal for <@${targetUserId}> ($${amount.toLocaleString()}). Balance refunded.**`, embeds: [], components: [] });
+                    await interaction.editReply({ content: `❌ **Declined Withdrawal for <@${targetUserId}> ($${amount.toLocaleString()}). Balance refunded.**`, embeds: [], components: [] }).catch(() => {});
 
                     try {
                         const player = await client.users.fetch(targetUserId);
@@ -149,7 +145,7 @@ module.exports = (client) => {
                     return;
                 }
 
-                // 7. Custom Win Percentage Modal Trigger Button
+                // 7. Custom Win Percentage Modal Trigger
                 if (customId.startsWith('win_custom_btn_')) {
                     const game = customId.replace('win_custom_btn_', '');
                     const modal = new ModalBuilder()
@@ -175,13 +171,14 @@ module.exports = (client) => {
                     const chance = parseFloat(parts[4]);
 
                     await supabase.from('game_settings').upsert({ game_name: game, win_chance: chance });
-                    await interaction.update({ content: `⚙️ **Updated ${game.toUpperCase()} win chance to ${chance}%**`, components: [] });
+                    await interaction.editReply({ content: `⚙️ **Updated ${game.toUpperCase()} win chance to${chance}%**`, components: [] }).catch(() => {});
                     return;
                 }
             }
 
             // --- SELECT MENU HANDLERS ---
             if (interaction.isStringSelectMenu()) {
+                await interaction.deferUpdate().catch(() => {});
                 if (interaction.customId === 'select_win_game') {
                     const selectedGame = interaction.values[0];
 
@@ -198,10 +195,10 @@ module.exports = (client) => {
                         new ButtonBuilder().setCustomId(`win_custom_btn_${selectedGame}`).setLabel('Custom %').setStyle(ButtonStyle.Primary)
                     );
 
-                    await interaction.update({
+                    await interaction.editReply({
                         content: `🎰 Select desired win probability for **${selectedGame.toUpperCase()}**:`,
                         components: [presetRow, presetRow2]
-                    });
+                    }).catch(() => {});
                 }
             }
 
@@ -217,7 +214,7 @@ module.exports = (client) => {
                     }
 
                     await supabase.from('game_settings').upsert({ game_name: game, win_chance: chance });
-                    await interaction.reply({ content: `⚙️ **Custom win chance set to ${chance}% for ${game.toUpperCase()}!**`, ephemeral: true });
+                    await interaction.reply({ content: `⚙️ **Custom win chance set to ${chance}\% for${game.toUpperCase()}!**`, ephemeral: true });
                 }
             }
         } catch (err) {
