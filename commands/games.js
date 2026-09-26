@@ -4,6 +4,32 @@ const { EmbedBuilder } = require('discord.js');
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// Table-based win probability formula (10% House Edge)
+function getLimboWinChance(target) {
+    if (target >= 1.01 && target <= 1.10) return 90 / target;      
+    if (target > 1.10 && target <= 1.20) return 90 / target;       
+    if (target > 1.20 && target <= 1.50) return 90 / target;       
+    if (target > 1.50 && target <= 2.00) return 90 / target;       
+    if (target > 2.00 && target <= 2.50) return 90 / target;       
+    if (target > 2.50 && target <= 3.00) return 90 / target;       
+    if (target > 3.00 && target <= 4.00) return 90 / target;       
+    if (target > 4.00 && target <= 5.00) return 90 / target;       
+    if (target > 5.00 && target <= 7.50) return 90 / target;       
+    if (target > 7.50 && target <= 10.00) return 90 / target;      
+    if (target > 10.00 && target <= 20.00) return 90 / target;     
+    if (target > 20.00 && target <= 50.00) return 90 / target;     
+    if (target > 50.00 && target <= 100.00) return 90 / target;    
+    return 0.89;
+}
+
+// Generates a naturally distributed random crash multiplier via exponential curve
+function generateNaturalCrash() {
+    const u = Math.random();
+    let val = 0.90 / (1 - u);
+    if (val < 1.00 || Math.random() < 0.08) val = 1.00; // ~8% instant crash rate
+    return Math.min(100, val);
+}
+
 async function handleGameCommands(command, args, message, prefix) {
     try {
         const userId = message.author.id;
@@ -13,13 +39,12 @@ async function handleGameCommands(command, args, message, prefix) {
         // --- LIMBO COMMAND ---
         if (['limbo', 'lb'].includes(command)) {
             if (args.length < 2) {
-                await message.reply(`❌ **Usage:** \`${prefix}limbo <amount> <multiplier>\` or \`${prefix}limbo <multiplier> <amount>\`\n*Example:* \`${prefix}limbo 100k 10x\``);
+                await message.reply(`❌ **Usage:** \`${prefix}limbo <amount> <multiplier>\` or \`${prefix}limbo <multiplier> <amount>\`\n*Example:* \`${prefix}limbo 100k 2x\``);
                 return true;
             }
 
             let rawMultiplier, rawAmount;
 
-            // Detect flexible argument positioning
             if (args[0].toLowerCase().includes('x') || (!isNaN(parseFloat(args[0])) && parseFloat(args[0]) > 1 && !args[0].toLowerCase().includes('k') && !args[0].toLowerCase().includes('m'))) {
                 rawMultiplier = args[0];
                 rawAmount = args[1];
@@ -31,7 +56,7 @@ async function handleGameCommands(command, args, message, prefix) {
             const targetMultiplier = parseFloat(rawMultiplier.replace(/x/gi, ''));
             const betAmount = parseAmount(rawAmount);
 
-            // Bounds restriction check (1.01x to 100x)
+            // Strict bounds enforcement: 1.01x to 100x
             if (isNaN(targetMultiplier) || targetMultiplier < 1.01 || targetMultiplier > 100) {
                 await message.reply('❌ **Target multiplier must be between 1.01x and 100x.**');
                 return true;
@@ -47,19 +72,29 @@ async function handleGameCommands(command, args, message, prefix) {
                 return true;
             }
 
-            // --- PURE PARETO LIMBO CURVE MATH (10% HOUSE EDGE) ---
-            const houseEdgeFactor = 0.90; // 10% House Edge
-            const u = Math.random(); // Uniform distribution [0, 1)
+            // Determine outcome based on bracket win chance
+            const winChancePercent = getLimboWinChance(targetMultiplier);
+            const won = (Math.random() * 100) < winChancePercent;
 
-            // Inverse transform sampling formula for exponential probability decay curve
-            let rawRolled = houseEdgeFactor / (1 - u);
+            let finalRolled;
 
-            // Hard limits: min 1.00x, max capped at 100x target range
-            if (rawRolled < 1.00) rawRolled = 1.00;
-            if (rawRolled > 100) rawRolled = 100;
+            if (won) {
+                // Generate natural outcome equal to or higher than target
+                let rolledVal = generateNaturalCrash();
+                while (rolledVal < targetMultiplier) {
+                    rolledVal = generateNaturalCrash();
+                }
+                finalRolled = rolledVal.toFixed(2);
+            } else {
+                // Generate natural outcome lower than target
+                let rolledVal = generateNaturalCrash();
+                while (rolledVal >= targetMultiplier) {
+                    rolledVal = generateNaturalCrash();
+                }
+                finalRolled = rolledVal.toFixed(2);
+            }
 
-            const targetRolled = parseFloat(rawRolled.toFixed(2));
-            const won = targetRolled >= targetMultiplier;
+            const targetRolled = parseFloat(finalRolled);
 
             let newBalance = user.balance;
             let rakebackAdded = 0;
@@ -80,7 +115,7 @@ async function handleGameCommands(command, args, message, prefix) {
                 wager_required: newWagerReq
             }).eq('user_id', userId);
 
-            // --- ANIMATED EXPONENTIAL COUNT-UP UI ---
+            // --- ANIMATION UI ---
             const initialEmbed = new EmbedBuilder()
                 .setColor('#F39C12')
                 .setTitle('🚀 Limbo — Launching...')
@@ -93,12 +128,11 @@ async function handleGameCommands(command, args, message, prefix) {
 
             const gameMsg = await message.reply({ embeds: [initialEmbed] });
 
-            // Smooth cubic progression steps matching the exponential curve visual
             const curveSteps = [0.20, 0.50, 0.80, 1.0];
             for (const progress of curveSteps) {
                 await sleep(350);
 
-                const currentStepVal = (1.00 + (targetRolled - 1.00) * Math.pow(progress, 3)).toFixed(2);
+                const currentStepVal = (1.00 + (targetRolled - 1.00) * Math.pow(progress, 2)).toFixed(2);
 
                 const stepEmbed = new EmbedBuilder()
                     .setColor('#F39C12')
