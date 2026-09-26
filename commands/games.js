@@ -4,30 +4,19 @@ const { EmbedBuilder } = require('discord.js');
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-// Table-based win probability calculation
-function getLimboWinChance(target) {
-    if (target >= 1.01 && target <= 1.10) return 90 / target;      
-    if (target > 1.10 && target <= 1.20) return 90 / target;       
-    if (target > 1.20 && target <= 1.50) return 90 / target;       
-    if (target > 1.50 && target <= 2.00) return 90 / target;       
-    if (target > 2.00 && target <= 2.50) return 90 / target;       
-    if (target > 2.50 && target <= 3.00) return 90 / target;       
-    if (target > 3.00 && target <= 4.00) return 90 / target;       
-    if (target > 4.00 && target <= 5.00) return 90 / target;       
-    if (target > 5.00 && target <= 7.50) return 90 / target;       
-    if (target > 7.50 && target <= 10.00) return 90 / target;      
-    if (target > 10.00 && target <= 20.00) return 90 / target;     
-    if (target > 20.00 && target <= 50.00) return 90 / target;     
-    if (target > 50.00 && target <= 100.00) return 90 / target;    
-    return 0.89;
-}
+// Pure Provably-Fair Exponential Limbo Generator
+function generateNaturalLimboRoll(houseEdgePercent = 5) {
+    const houseEdge = (100 - houseEdgePercent) / 100; // e.g., 0.95 for 5% house edge
+    const u = Math.random(); // Uniform distribution [0, 1)
 
-// Generates natural crash multiplier distributions
-function generateNaturalCrash() {
-    const u = Math.random();
-    let val = 0.90 / (1 - u);
-    if (val < 1.00 || Math.random() < 0.08) val = 1.00;
-    return Math.min(100, val);
+    // Classic Inverse Pareto formula: 0.95 / (1 - U)
+    let roll = houseEdge / (1 - u);
+
+    // Minimum crash floor is 1.00x
+    if (roll < 1.00) roll = 1.00;
+
+    // Hard cap max roll at 100x
+    return Math.min(100, roll);
 }
 
 async function handleGameCommands(command, args, message, prefix) {
@@ -56,6 +45,7 @@ async function handleGameCommands(command, args, message, prefix) {
             const targetMultiplier = parseFloat(rawMultiplier.replace(/x/gi, ''));
             const betAmount = parseAmount(rawAmount);
 
+            // Strict bounds: 1.01x to 100x
             if (isNaN(targetMultiplier) || targetMultiplier < 1.01 || targetMultiplier > 100) {
                 await message.reply('❌ **Target multiplier must be between 1.01x and 100x.**');
                 return true;
@@ -71,25 +61,12 @@ async function handleGameCommands(command, args, message, prefix) {
                 return true;
             }
 
-            const winChancePercent = getLimboWinChance(targetMultiplier);
-            const won = (Math.random() * 100) < winChancePercent;
+            // 1. Roll ONCE directly from the natural exponential probability distribution (5% house edge)
+            const rawRolled = generateNaturalLimboRoll(5);
+            const targetRolled = parseFloat(rawRolled.toFixed(2));
 
-            let finalRolled;
-            if (won) {
-                let rolledVal = generateNaturalCrash();
-                while (rolledVal < targetMultiplier) {
-                    rolledVal = generateNaturalCrash();
-                }
-                finalRolled = rolledVal.toFixed(2);
-            } else {
-                let rolledVal = generateNaturalCrash();
-                while (rolledVal >= targetMultiplier) {
-                    rolledVal = generateNaturalCrash();
-                }
-                finalRolled = rolledVal.toFixed(2);
-            }
-
-            const targetRolled = parseFloat(finalRolled);
+            // 2. Win condition: Rolled value must meet or exceed target
+            const won = targetRolled >= targetMultiplier;
 
             let newBalance = user.balance;
             let rakebackAdded = 0;
@@ -146,6 +123,7 @@ async function handleGameCommands(command, args, message, prefix) {
 
             await sleep(250);
 
+            // Final Result
             const finalEmbed = new EmbedBuilder()
                 .setColor(won ? '#2ECC71' : '#E74C3C')
                 .setTitle(won ? '🚀 Limbo — YOU WON!' : '💥 Limbo — CRASHED!')
