@@ -11,16 +11,22 @@ async function handleGeneralCommands(command, args, message, prefix) {
             let bonusText = '';
 
             if (!user || user.claimed_starter_bonus !== true) {
-                const newBalance = (user?.balance || 0) + 1000000;
+                const currentBalance = user?.balance || 0;
+                const newBalance = currentBalance + 1000000;
 
-                await supabase.from('balances').upsert({
-                    user_id: message.author.id,
-                    username: message.author.username,
-                    balance: newBalance,
-                    claimed_starter_bonus: true
-                });
+                // Directly update user balance in Supabase
+                const { error } = await supabase
+                    .from('balances')
+                    .update({
+                        balance: newBalance,
+                        claimed_starter_bonus: true,
+                        username: message.author.username
+                    })
+                    .eq('user_id', message.author.id);
 
-                bonusText = '\n\n🎉 **Starter Bonus Claimed!** Added **$1,000,000** to your balance!';
+                if (!error) {
+                    bonusText = '\n\n🎉 **Starter Bonus Claimed!** Added **$1,000,000** to your balance!';
+                }
             }
 
             const embed = new EmbedBuilder()
@@ -64,13 +70,17 @@ async function handleGeneralCommands(command, args, message, prefix) {
 
         // --- BALANCE COMMAND ---
         if (['bal', 'balance'].includes(command)) {
+            // Re-fetch fresh balance from DB
+            const { data: freshUser } = await supabase.from('balances').select('*').eq('user_id', message.author.id).single();
+            const activeUser = freshUser || user;
+
             const embed = new EmbedBuilder()
                 .setColor('#2ECC71')
                 .setTitle(`💰 ${message.author.username}'s Balance`)
                 .addFields(
-                    { name: 'Balance', value: `$${(user?.balance || 0).toLocaleString()}`, inline: true },
-                    { name: 'Rakeback', value: `$${(user?.rakeback || 0).toLocaleString()}`, inline: true },
-                    { name: 'Wager Required', value: `$${(user?.wager_required || 0).toLocaleString()}`, inline: true }
+                    { name: 'Balance', value: `$${(activeUser?.balance || 0).toLocaleString()}`, inline: true },
+                    { name: 'Rakeback', value: `$${(activeUser?.rakeback || 0).toLocaleString()}`, inline: true },
+                    { name: 'Wager Required', value: `$${(activeUser?.wager_required || 0).toLocaleString()}`, inline: true }
                 );
 
             await message.reply({ embeds: [embed] });
