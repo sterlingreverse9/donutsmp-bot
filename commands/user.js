@@ -2,319 +2,89 @@ const supabase = require('../config/supabase');
 const { parseAmount, getOrCreateUser } = require('../utils/helpers');
 const { EmbedBuilder } = require('discord.js');
 
-const ADMIN_ID = '1264564384508940298';
-
 async function handleUserCommands(command, args, message, prefix) {
     try {
-        const userId = message.author.id;
-        const username = message.author.username;
-        const user = await getOrCreateUser(userId, username);
-
-        // --- HELP COMMAND ---
-        if (['help', 'h'].includes(command)) {
-            const helpEmbed = new EmbedBuilder()
-                .setColor('#3498DB')
-                .setTitle('📜 Donut Bet Bot — Command List')
-                .setDescription('Here are the available commands:\n\n' +
-                    '**Games:**\n' +
-                    `• \`${prefix}limbo <amount> <multiplier>\` - Play Limbo\n` +
-                    `• \`${prefix}cf <heads/tails> <amount>\` - Play Coinflip\n\n` +
-                    '**Account & Cashier:**\n' +
-                    `• \`${prefix}profile\` or \`${prefix}me\` - View stats\n` +
-                    `• \`${prefix}link <mc_ign>\` - Link Minecraft IGN\n` +
-                    `• \`${prefix}unlink\` - Unlink Minecraft IGN\n` +
-                    `• \`${prefix}deposit <amount>\` - Deposit funds\n` +
-                    `• \`${prefix}paid\` - Submit screenshot after paying\n` +
-                    `• \`${prefix}cancel\` - Cancel current deposit\n` +
-                    `• \`${prefix}withdraw <amount>\` - Withdraw funds\n` +
-                    `• \`${prefix}confirm\` - Confirm pending withdrawal\n` +
-                    `• \`${prefix}wager\` - Check wager requirement\n\n` +
-                    '📞 Support: Contact **@piyushyadav83**')
-                .setFooter({ text: 'Donut Bet Bot' });
-
-            await message.reply({ embeds: [helpEmbed] });
-            return true;
-        }
-
-        // --- BALANCE COMMAND ---
-        if (['bal', 'balance'].includes(command)) {
-            const balEmbed = new EmbedBuilder()
-                .setColor('#2ECC71')
-                .setTitle(`💰 ${username}'s Balance`)
-                .addFields(
-                    { name: 'Balance', value: `$${(user.balance || 0).toLocaleString()}`, inline: true },
-                    { name: 'Rakeback', value: `$${(user.rakeback || 0).toLocaleString()}`, inline: true },
-                    { name: 'Wager Required', value: `$${(user.wager_required || 0).toLocaleString()}`, inline: true }
-                )
-                .setFooter({ text: 'Donut Bet Bot' });
-
-            await message.reply({ embeds: [balEmbed] });
-            return true;
-        }
-
-        // --- LINK MC COMMAND ---
-        if (['link'].includes(command)) {
-            const mcIgn = args[0];
-            if (!mcIgn) {
-                await message.reply(`❌ **Usage:** \`${prefix}link <Minecraft IGN>\``);
+        // --- LINK MINECRAFT IGN COMMAND ---
+        if (['link', 'ign'].includes(command)) {
+            if (args.length < 1) {
+                await message.reply(`❌ **Usage:** \`${prefix}link <Minecraft_IGN>\``);
                 return true;
             }
+
+            const ign = args[0].trim();
+            const user = await getOrCreateUser(message.author.id, message.author.username);
 
             await supabase.from('balances').upsert({
-                user_id: userId,
-                username: username,
-                mc_ign: mcIgn
+                user_id: message.author.id,
+                username: message.author.username,
+                mc_ign: ign
             }, { onConflict: 'user_id' });
 
-            await message.reply(`✅ Linked your Minecraft username to **${mcIgn}**!`);
-            return true;
-        }
-
-        // --- UNLINK MC COMMAND ---
-        if (['unlink'].includes(command)) {
-            if (!user.mc_ign) {
-                await message.reply('❌ You do not have any Minecraft IGN linked.');
-                return true;
-            }
-
-            const oldIgn = user.mc_ign;
-            await supabase.from('balances').upsert({
-                user_id: userId,
-                username: username,
-                mc_ign: null
-            }, { onConflict: 'user_id' });
-
-            await message.reply(`✅ **Unlinked Minecraft IGN:** \`${oldIgn}\``);
-            return true;
-        }
-
-        // --- WAGER COMMAND ---
-        if (['wager'].includes(command)) {
-            const remaining = user.wager_required || 0;
-            await message.reply(`🎰 **Remaining Wager Required:** $${remaining.toLocaleString()}`);
-            return true;
-        }
-
-        // --- PROFILE / ME COMMAND ---
-        if (['profile', 'me'].includes(command)) {
-            const { data: logs } = await supabase.from('game_logs').select('*').eq('user_id', userId).order('created_at', { ascending: false }).limit(5);
-            const { data: allLogs } = await supabase.from('game_logs').select('profit_loss').eq('user_id', userId);
-
-            const totalPL = allLogs ? allLogs.reduce((acc, row) => acc + parseFloat(row.profit_loss || 0), 0) : 0;
-            const { data: refs } = await supabase.from('balances').select('user_id').eq('referred_by', userId);
-
-            let historyText = logs && logs.length > 0 
-                ? logs.map(l => `${l.won ? '🟩' : '🟥'} **${l.game_name}**: ${l.profit_loss >= 0 ? '+' : ''}$${l.profit_loss.toLocaleString()}`).join('\n')
-                : 'No recent games played.';
-
-            const profileEmbed = new EmbedBuilder()
-                .setColor('#9B59B6')
-                .setTitle(`👤 ${username}'s Profile`)
-                .addFields(
-                    { name: '🎮 Linked Minecraft IGN', value: user.mc_ign ? `\`${user.mc_ign}\`` : 'Not Linked (`!link <ign>`)', inline: true },
-                    { name: '💰 Bot Balance', value: `$${(user.balance || 0).toLocaleString()}`, inline: true },
-                    { name: '🎰 Remaining Wager', value: `$${(user.wager_required || 0).toLocaleString()}`, inline: true },
-                    { name: '📊 Total Wagered', value: `$${(user.total_wagered || 0).toLocaleString()}`, inline: true },
-                    { name: '📈 Overall Profit/Loss', value: `${totalPL >= 0 ? '🟢 +$' : '🔴 -$'}$${Math.abs(totalPL).toLocaleString()}`, inline: true },
-                    { name: '👥 Referrals Count', value: `${refs ? refs.length : 0}`, inline: true },
-                    { name: '📜 Recent Game History', value: historyText, inline: false }
-                )
-                .setFooter({ text: 'Donut Bet Bot' });
-
-            await message.reply({ embeds: [profileEmbed] });
-            return true;
-        }
-
-        // --- DEPOSIT COMMAND ---
-        if (['deposit', 'depo'].includes(command)) {
-            if (!user.mc_ign) {
-                await message.reply(`❌ **You must link your Minecraft IGN first using \`${prefix}link <mc_ign>\` before depositing!**`);
-                return true;
-            }
-
-            const rawAmount = args[0];
-            const amount = parseAmount(rawAmount);
-
-            if (!amount || amount < 1000000) {
-                await message.reply(`❌ **Minimum deposit amount is $1,000,000 (1M).** Usage: \`${prefix}deposit 1m\``);
-                return true;
-            }
-
-            const depoId = 'DEP-' + Math.floor(100000 + Math.random() * 900000);
-
-            await supabase.from('pending_deposits').insert({
-                id: depoId,
-                user_id: userId,
-                username: username,
-                amount: amount,
-                status: 'pending_screenshot'
-            });
-
-            const depoEmbed = new EmbedBuilder()
-                .setColor('#2ECC71')
-                .setTitle(`💳 Deposit Request #${depoId}`)
-                .setDescription(`To complete your deposit of **$${amount.toLocaleString()}**:\n\n` +
-                    `1. Pay **.fbfnch** in-game: \`/pay .fbfnch ${amount}\`\n` +
-                    `2. Take an uncropped screenshot of payment.\n` +
-                    `3. Send command \`${prefix}paid\` with the image attached.\n\n` +
-                    `To cancel, type \`${prefix}cancel\`.`)
-                .addFields({ name: 'Linked IGN', value: `\`${user.mc_ign}\``, inline: true })
-                .setFooter({ text: 'Donut Bet Bot' });
-
-            await message.reply({ embeds: [depoEmbed] });
-            return true;
-        }
-
-        // --- PAID COMMAND ---
-        if (['paid'].includes(command)) {
-            const { data: activeDepo } = await supabase.from('pending_deposits')
-                .select('*')
-                .eq('user_id', userId)
-                .eq('status', 'pending_screenshot')
-                .order('created_at', { ascending: false })
-                .limit(1)
-                .single();
-
-            if (!activeDepo) {
-                await message.reply(`❌ You do not have an active deposit. Start one using \`${prefix}deposit <amount>\``);
-                return true;
-            }
-
-            const attachment = message.attachments.first();
-            if (!attachment) {
-                await message.reply('❌ **Please attach your payment screenshot while sending `!paid`!**');
-                return true;
-            }
-
-            await supabase.from('pending_deposits').update({
-                status: 'pending_approval',
-                screenshot_url: attachment.url
-            }).eq('id', activeDepo.id);
-
-            await message.reply(`✅ **Deposit proof submitted!** (ID: \`${activeDepo.id}\`). Staff will verify your transaction.`);
-
-            try {
-                const adminUser = await message.client.users.fetch(ADMIN_ID);
-                const adminEmbed = new EmbedBuilder()
-                    .setColor('#F1C40F')
-                    .setTitle(`📥 New Deposit Submitted (#${activeDepo.id})`)
-                    .addFields(
-                        { name: 'User', value: `${username} (<@${userId}>)`, inline: true },
-                        { name: 'MC IGN', value: `${user.mc_ign}`, inline: true },
-                        { name: 'Amount', value: `$${activeDepo.amount.toLocaleString()}`, inline: true }
-                    )
-                    .setImage(attachment.url)
-                    .setFooter({ text: `Approve: !approvedepo ${activeDepo.id} \vert{} Deny: !denydepo ${activeDepo.id}` });
-
-                await adminUser.send({ embeds: [adminEmbed] });
-            } catch (err) {}
-            return true;
-        }
-
-        // --- CANCEL COMMAND ---
-        if (['cancel'].includes(command)) {
-            const { data: activeDepo } = await supabase.from('pending_deposits')
-                .select('*')
-                .eq('user_id', userId)
-                .eq('status', 'pending_screenshot')
-                .order('created_at', { ascending: false })
-                .limit(1)
-                .single();
-
-            if (!activeDepo) {
-                await message.reply(`❌ You don't have an active deposit to cancel.`);
-                return true;
-            }
-
-            await supabase.from('pending_deposits').update({ status: 'cancelled' }).eq('id', activeDepo.id);
-            await message.reply('❌ **Deposit cancelled.**');
+            await message.reply(`✅ Linked your Minecraft username to **${ign}**!`);
             return true;
         }
 
         // --- WITHDRAW COMMAND ---
         if (['withdraw', 'wd'].includes(command)) {
-            if (!user.mc_ign) {
-                await message.reply(`❌ **You must link your Minecraft IGN first using \`${prefix}link <mc_ign>\` before withdrawing!**`);
+            if (args.length < 1) {
+                await message.reply(`❌ **Usage:** \`${prefix}withdraw <amount>\`\n*Example:* \`${prefix}withdraw 1.15m\``);
                 return true;
             }
 
-            const rawAmount = args[0];
-            const amount = parseAmount(rawAmount);
-
+            const amount = parseAmount(args[0]);
             if (!amount || amount <= 0) {
-                await message.reply(`❌ **Invalid withdrawal amount.** Usage: \`${prefix}withdraw <amount>\``);
+                await message.reply('❌ Invalid withdrawal amount specified.');
                 return true;
             }
 
-            if ((user.balance || 0) < amount) {
-                await message.reply(`❌ Insufficient balance! Your balance: **$${(user.balance || 0).toLocaleString()}**`);
+            const user = await getOrCreateUser(message.author.id, message.author.username);
+            const currentBal = user.balance || 0;
+
+            if (currentBal < amount) {
+                await message.reply(`❌ Insufficient balance! Your current balance is **$${currentBal.toLocaleString()}**.`);
                 return true;
             }
 
             if ((user.wager_required || 0) > 0) {
-                await message.reply(`❌ **You have uncleared wager requirements!** Remaining Wager: **$${(user.wager_required).toLocaleString()}**.`);
+                await message.reply(`❌ You must complete **$${user.wager_required.toLocaleString()}** in wagers before withdrawing.`);
                 return true;
             }
 
-            const wdId = 'WD-' + Math.floor(100000 + Math.random() * 900000);
+            const reqId = `WD-${Math.floor(100000 + Math.random() * 900000)}`;
+            const newBal = currentBal - amount;
 
-            await supabase.from('balances').upsert({
-                user_id: userId,
-                username: username,
-                balance: user.balance - amount
-            }, { onConflict: 'user_id' });
-
-            await supabase.from('pending_withdrawals').insert({
-                id: wdId,
-                user_id: userId,
-                username: username,
+            // Deduct balance immediately & save request
+            await supabase.from('balances').update({ balance: newBal }).eq('user_id', message.author.id);
+            await supabase.from('withdrawals').insert([{
+                request_id: reqId,
+                user_id: message.author.id,
+                username: message.author.username,
+                mc_ign: user.mc_ign || 'Not Linked',
                 amount: amount,
-                status: 'pending_confirmation'
-            });
+                status: 'pending'
+            }]);
 
-            await message.reply(`⚠️ **Confirm Withdrawal:** Withdraw **$${amount.toLocaleString()}** to IGN \`${user.mc_ign}\`?\nType \`${prefix}confirm\` to submit.`);
-            return true;
-        }
+            const embed = new EmbedBuilder()
+                .setTitle(`📤 New Withdrawal Request (#${reqId})`)
+                .setColor('#F39C12')
+                .addFields(
+                    { name: 'User', value: `${message.author.username} (<@${message.author.id}>)`, inline: false },
+                    { name: 'MC IGN', value: user.mc_ign || 'Not Linked', inline: true },
+                    { name: 'Amount', value: `$${amount.toLocaleString()}`, inline: true },
+                    { name: 'Approval Commands', value: `\`!approvewd ${reqId}\` | \`!declinewd ${reqId}\``, inline: false }
+                )
+                .setFooter({ text: 'Donut Bet Bot' })
+                .setTimestamp();
 
-        // --- CONFIRM WITHDRAWAL COMMAND ---
-        if (['confirm'].includes(command)) {
-            const { data: activeWd } = await supabase.from('pending_withdrawals')
-                .select('*')
-                .eq('user_id', userId)
-                .eq('status', 'pending_confirmation')
-                .order('created_at', { ascending: false })
-                .limit(1)
-                .single();
-
-            if (!activeWd) {
-                await message.reply(`❌ You do not have a pending withdrawal confirmation.`);
-                return true;
-            }
-
-            await supabase.from('pending_withdrawals').update({ status: 'pending_approval' }).eq('id', activeWd.id);
-            await message.reply(`✅ **Withdrawal request submitted!** (ID: \`${activeWd.id}\`).`);
-
-            try {
-                const adminUser = await message.client.users.fetch(ADMIN_ID);
-                const adminEmbed = new EmbedBuilder()
-                    .setColor('#E67E22')
-                    .setTitle(`📤 New Withdrawal Request (#${activeWd.id})`)
-                    .addFields(
-                        { name: 'User', value: `${username} (<@${userId}>)`, inline: true },
-                        { name: 'MC IGN', value: `${user.mc_ign}`, inline: true },
-                        { name: 'Amount', value: `$${activeWd.amount.toLocaleString()}`, inline: true }
-                    )
-                    .setFooter({ text: `Approve: !approvewd ${activeWd.id} | Deny: !declinewd ${activeWd.id}` });
-
-                await adminUser.send({ embeds: [adminEmbed] });
-            } catch (err) {}
+            await message.reply({ embeds: [embed] });
             return true;
         }
 
         return false;
     } catch (err) {
-        console.error('❌ Error in user command:', err);
-        return false;
+        console.error('❌ Error in user command handler:', err);
+        await message.reply('❌ An error occurred processing your request.').catch(() => {});
+        return true;
     }
 }
 
