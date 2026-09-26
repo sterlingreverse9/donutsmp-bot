@@ -4,7 +4,7 @@ const { EmbedBuilder } = require('discord.js');
 const botState = require('../config/botState');
 
 // Primary Admin Discord IDs allowed to run admin commands anywhere (including DMs)
-const ADMIN_IDS = ['1453068990187438086']; 
+const ADMIN_IDS = ['1264564384508940298']; 
 
 async function handleAdminCommands(command, args, message, prefix) {
     try {
