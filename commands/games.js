@@ -1,121 +1,156 @@
 const supabase = require('../config/supabase');
-const { getOrCreateUser, parseAmount } = require('../utils/helpers');
+const { parseAmount, getOrCreateUser } = require('../utils/helpers');
 const { EmbedBuilder } = require('discord.js');
 
 async function handleGameCommands(command, args, message, prefix) {
     try {
-        // --- COINFLIP COMMAND ---
-        if (['cf', 'coin', 'coinflip'].includes(command)) {
+        const userId = message.author.id;
+        const username = message.author.username;
+        const user = await getOrCreateUser(userId, username);
+
+        // --- LIMBO COMMAND ---
+        if (['limbo', 'lb'].includes(command)) {
             if (args.length < 2) {
-                await message.reply(`❌ **Usage:** \`${prefix}cf <heads/tails> <amount>\` or \`${prefix}cf <amount> <heads/tails>\``);
+                await message.reply(`❌ **Usage:** \`${prefix}limbo <target_multiplier> <bet_amount>\`\n*Example:* \`${prefix}limbo 5x 100k\` or \`${prefix}limbo 5 100k\``);
                 return true;
             }
 
-            let choice = null;
-            let rawAmount = null;
+            // Clean multiplier input (strip 'x' or 'X' if present)
+            const rawMultiplier = args[0].replace(/x/gi, '');
+            const targetMultiplier = parseFloat(rawMultiplier);
 
-            for (const arg of args) {
-                const cleanArg = arg.toLowerCase();
-                if (['heads', 'head', 'h', 'tails', 'tail', 't'].includes(cleanArg)) {
-                    choice = cleanArg.startsWith('h') ? 'heads' : 'tails';
-                } else if (!rawAmount) {
-                    rawAmount = arg;
-                }
-            }
+            // Parse bet amount
+            const betAmount = parseAmount(args[1]);
 
-            if (!choice) {
-                await message.reply('❌ Invalid choice! Pick either **heads** or **tails**.');
+            if (isNaN(targetMultiplier) || targetMultiplier <= 1.01) {
+                await message.reply('❌ Target multiplier must be a number greater than **1.01x**.');
                 return true;
             }
 
-            const amount = parseAmount(rawAmount);
-            if (!amount || amount <= 0) {
-                await message.reply('❌ Invalid bet amount.');
+            if (!betAmount || betAmount <= 0) {
+                await message.reply(`❌ Invalid bet amount. Usage: \`${prefix}limbo <multiplier> <amount>\``);
                 return true;
             }
 
-            const user = await getOrCreateUser(message.author.id, message.author.username);
-
-            if ((user?.balance || 0) < amount) {
-                await message.reply('❌ Insufficient balance for this bet!');
+            if ((user?.balance || 0) < betAmount) {
+                await message.reply(`❌ You don't have enough balance! Current balance: **$${(user?.balance || 0).toLocaleString()}**`);
                 return true;
             }
 
-            // Deduct initial bet
-            const currentBal = user.balance - amount;
-            await supabase.from('balances').update({ balance: currentBal }).eq('user_id', message.author.id);
+            // Fetch game odds settings from Supabase (defaulting to 45% win chance)
+            const { data: settings } = await supabase.from('game_settings').select('*').eq('game_name', 'limbo').single();
+            const configuredWinChance = settings?.win_chance !== undefined ? settings.win_chance : 45;
 
-            // Fetch Win Chance Setting (Strict Default = 45%)
-            let winChance = 45;
-            const { data: setting } = await supabase.from('game_settings').select('win_chance').eq('game_name', 'cf').single();
-            if (setting && setting.win_chance !== null && !isNaN(setting.win_chance)) {
-                winChance = setting.win_chance;
+            // Generate rolled multiplier based on configured probability
+            const isWinRoll = (Math.random() * 100) < configuredWinChance;
+            let rolledMultiplier;
+
+            if (isWinRoll) {
+                // Roll higher than target
+                rolledMultiplier = (targetMultiplier + (Math.random() * targetMultiplier)).toFixed(2);
+            } else {
+                // Roll lower than target
+                rolledMultiplier = (1.00 + Math.random() * (targetMultiplier - 1.01)).toFixed(2);
             }
 
-            // Roll Outcome
-            const roll = Math.random() * 100;
-            const isWin = roll < winChance;
-            const landedOn = isWin ? choice : (choice === 'heads' ? 'tails' : 'heads');
+            const won = parseFloat(rolledMultiplier) >= targetMultiplier;
+            let newBalance = user.balance;
+            let rakebackAdded = 0;
 
-            const initialMsg = await message.reply('🪙 **Flipping coin...**');
-
-            const frames = ['🪙 **Flipping...** [ 🌕 Heads ]', '🪙 **Flipping...** [ 🌑 Tails ]', '🪙 **Flipping...** [ 🌕 Heads ]'];
-            for (const frame of frames) {
-                await new Promise(res => setTimeout(res, 600));
-                await initialMsg.edit(frame).catch(() => {});
+            if (won) {
+                const profit = betAmount * (targetMultiplier - 1);
+                newBalance += profit;
+            } else {
+                newBalance -= betAmount;
+                // Add 1% loss rakeback
+                rakebackAdded = betAmount * 0.01;
             }
 
-            await new Promise(res => setTimeout(res, 600));
+            // Deduct required wager
+            const newWagerReq = Math.max(0, (user.wager_required || 0) - betAmount);
 
-            let newBalance = currentBal;
-            let wagerLeft = Math.max(0, (user.wager_required || 0) - amount);
+            // Update user balance in Supabase
+            await supabase.from('balances').update({
+                balance: newBalance,
+                rakeback: (user.rakeback || 0) + rakebackAdded,
+                wager_required: newWagerReq
+            }).eq('user_id', userId);
+
+            const embed = new EmbedBuilder()
+                .setColor(won ? '#2ECC71' : '#E74C3C')
+                .setTitle(won ? '🚀 Limbo — YOU WON!' : '💥 Limbo — CRASHED!')
+                .addFields(
+                    { name: 'Target', value: `${targetMultiplier}x`, inline: true },
+                    { name: 'Rolled', value: `${rolledMultiplier}x`, inline: true },
+                    { name: 'Bet Amount', value: `$${betAmount.toLocaleString()}`, inline: true },
+                    { name: won ? 'Profit' : 'Loss', value: won ? `+$${(betAmount * (targetMultiplier - 1)).toLocaleString()}` : `-$${betAmount.toLocaleString()}`, inline: true },
+                    { name: 'New Balance', value: `$${newBalance.toLocaleString()}`, inline: true }
+                )
+                .setFooter({ text: 'Donut Bet Bot' });
+
+            await message.reply({ embeds: [embed] });
+            return true;
+        }
+
+        // --- COINFLIP COMMAND ---
+        if (['cf', 'coinflip'].includes(command)) {
+            const side = args[0]?.toLowerCase();
+            const betAmount = parseAmount(args[1]);
+
+            if (!['heads', 'tails', 'h', 't'].includes(side) || !betAmount || betAmount <= 0) {
+                await message.reply(`❌ **Usage:** \`${prefix}cf <heads/tails> <amount>\`\n*Example:* \`${prefix}cf tails 100k\``);
+                return true;
+            }
+
+            const chosenSide = ['heads', 'h'].includes(side) ? 'heads' : 'tails';
+
+            if ((user?.balance || 0) < betAmount) {
+                await message.reply(`❌ Insufficient balance! Your balance: **$${(user?.balance || 0).toLocaleString()}**`);
+                return true;
+            }
+
+            const { data: settings } = await supabase.from('game_settings').select('*').eq('game_name', 'cf').single();
+            const winChance = settings?.win_chance !== undefined ? settings.win_chance : 45;
+
+            const isWin = (Math.random() * 100) < winChance;
+            const landedOn = isWin ? chosenSide : (chosenSide === 'heads' ? 'tails' : 'heads');
+
+            let newBalance = user.balance;
+            let rakebackAdded = 0;
 
             if (isWin) {
-                const winnings = amount * 2;
-                newBalance += winnings;
-
-                await supabase.from('balances').update({
-                    balance: newBalance,
-                    wager_required: wagerLeft
-                }).eq('user_id', message.author.id);
+                newBalance += betAmount;
             } else {
-                const rakebackAdd = amount * 0.005;
-                const newRakeback = (user.rakeback || 0) + rakebackAdd;
-
-                await supabase.from('balances').update({
-                    balance: newBalance,
-                    rakeback: newRakeback,
-                    wager_required: wagerLeft
-                }).eq('user_id', message.author.id);
-
-                if (user.referred_by) {
-                    const refCommission = amount * 0.02;
-                    const { data: referrer } = await supabase.from('balances').select('unclaimed_ref_rewards').eq('user_id', user.referred_by).single();
-                    if (referrer) {
-                        await supabase.from('balances').update({
-                            unclaimed_ref_rewards: (referrer.unclaimed_ref_rewards || 0) + refCommission
-                        }).eq('user_id', user.referred_by);
-                    }
-                }
+                newBalance -= betAmount;
+                rakebackAdded = betAmount * 0.01;
             }
 
-            const resultEmbed = new EmbedBuilder()
-                .setColor(isWin ? '#2ECC71' : '#E74C3C')
-                .setTitle(`🪙 Coinflip — ${isWin ? 'YOU WON!' : 'YOU LOST!'}`)
-                .addFields(
-                    { name: 'Choice', value: choice === 'heads' ? 'Heads' : 'Tails', inline: true },
-                    { name: 'Landed On', value: landedOn === 'heads' ? 'Heads' : 'Tails', inline: true },
-                    { name: 'Result', value: isWin ? `+$${amount.toLocaleString()}` : `-$${amount.toLocaleString()}` },
-                    { name: 'New Balance', value: `$${newBalance.toLocaleString()}` }
-                );
+            const newWagerReq = Math.max(0, (user.wager_required || 0) - betAmount);
 
-            await initialMsg.edit({ content: null, embeds: [resultEmbed] });
+            await supabase.from('balances').update({
+                balance: newBalance,
+                rakeback: (user.rakeback || 0) + rakebackAdded,
+                wager_required: newWagerReq
+            }).eq('user_id', userId);
+
+            const embed = new EmbedBuilder()
+                .setColor(isWin ? '#2ECC71' : '#E74C3C')
+                .setTitle(isWin ? '🪙 Coinflip — YOU WON!' : '🪙 Coinflip — YOU LOST!')
+                .addFields(
+                    { name: 'Choice', value: chosenSide.toUpperCase(), inline: true },
+                    { name: 'Landed On', value: landedOn.toUpperCase(), inline: true },
+                    { name: 'Result', value: isWin ? `+$${betAmount.toLocaleString()}` : `-$${betAmount.toLocaleString()}`, inline: true },
+                    { name: 'New Balance', value: `$${newBalance.toLocaleString()}`, inline: true }
+                )
+                .setFooter({ text: 'Donut Bet Bot' });
+
+            await message.reply({ embeds: [embed] });
             return true;
         }
 
         return false;
     } catch (err) {
-        console.error('❌ Error in handleGameCommands:', err);
+        console.error('❌ Error in game handler:', err);
         return false;
     }
 }
