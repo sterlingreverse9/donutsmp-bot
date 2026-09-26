@@ -1,15 +1,44 @@
 const supabase = require('../config/supabase');
 const { processRefClaim } = require('../commands/general');
+const { getOrCreateUser } = require('../utils/helpers');
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
 
 module.exports = (client) => {
     client.on('interactionCreate', async (interaction) => {
         try {
-            // --- IMMEDIATE ACKNOWLEDGEMENT TO PREVENT TIMEOUTS ---
+            // --- CRITICAL FIX: IMMEDIATE ACKNOWLEDGEMENT TO PREVENT DISCORD TIMEOUTS ---
             if (interaction.isButton() || interaction.isStringSelectMenu()) {
-                // Modals require showModal() directly, so bypass defer for modal trigger buttons
                 if (!interaction.customId.startsWith('win_custom_btn_')) {
                     await interaction.deferUpdate().catch(() => {});
+                }
+            }
+
+            // --- SLASH COMMANDS HANDLER (/start, /help, etc.) ---
+            if (interaction.isChatInputCommand()) {
+                const { commandName, user } = interaction;
+
+                if (commandName === 'start') {
+                    await interaction.deferReply().catch(() => {});
+                    const dbUser = await getOrCreateUser(user.id, user.username);
+
+                    let bonusMsg = '';
+                    if (!dbUser?.claimed_starter_bonus) {
+                        await supabase.from('balances').update({
+                            balance: (dbUser?.balance || 0) + 1000000,
+                            claimed_starter_bonus: true
+                        }).eq('user_id', user.id);
+
+                        bonusMsg = '\n\n🎉 **First-Time Bonus!** You received **$1,000,000** starter balance!';
+                    }
+
+                    const embed = new EmbedBuilder()
+                        .setColor('#F1C40F')
+                        .setTitle('🍩 Welcome to Donut Bet!')
+                        .setDescription(`Use \`/help\` or \`!help\` to view all available commands.${bonusMsg}`)
+                        .setFooter({ text: 'Donut Bet Bot' });
+
+                    await interaction.editReply({ embeds: [embed] }).catch(() => {});
+                    return;
                 }
             }
 
@@ -17,42 +46,45 @@ module.exports = (client) => {
             if (interaction.isButton()) {
                 const { customId, user } = interaction;
 
-                // 1. Claim Referral Rewards
+                // 1. Referral Reward Claim
                 if (customId === 'claim_ref_rewards') {
                     await processRefClaim(user.id, interaction);
                     return;
                 }
 
-                // 2. Deposit "I Paid" Button
+                // 2. Deposit "I Paid" Clicked
                 if (customId.startsWith('depo_paid_')) {
                     const amount = parseFloat(customId.split('_')[2]);
                     const { data: userData } = await supabase.from('balances').select('*').eq('user_id', user.id).single();
 
                     const ADMIN_ID = process.env.ADMIN_ID || process.env.ADMIN_DISCORD_ID;
-                    const adminUser = await client.users.fetch(ADMIN_ID);
+                    const adminUser = await client.users.fetch(ADMIN_ID).catch(() => null);
 
-                    const adminEmbed = new EmbedBuilder()
-                        .setColor('#F1C40F')
-                        .setTitle('🔔 New Deposit Alert!')
-                        .addFields(
-                            { name: 'User', value: `${user.tag} (\`${user.id}\`)` },
-                            { name: 'MC IGN', value: `\`${userData?.mc_username || 'Not Linked'}\`` },
-                            { name: 'Amount', value: `$${amount.toLocaleString()}` }
-                        )
-                        .setTimestamp();
+                    if (adminUser) {
+                        const adminEmbed = new EmbedBuilder()
+                            .setColor('#F1C40F')
+                            .setTitle('🔔 New Deposit Alert!')
+                            .addFields(
+                                { name: 'User', value: `${user.tag} (\`${user.id}\`)` },
+                                { name: 'MC IGN', value: `\`${userData?.mc_username || 'Not Linked'}\`` },
+                                { name: 'Amount', value: `$${amount.toLocaleString()}` }
+                            )
+                            .setTimestamp();
 
-                    const adminRow = new ActionRowBuilder().addComponents(
-                        new ButtonBuilder()
-                            .setCustomId(`admin_depo_approve_${user.id}_${amount}`)
-                            .setLabel('Approve')
-                            .setStyle(ButtonStyle.Success),
-                        new ButtonBuilder()
-                            .setCustomId(`admin_depo_decline_${user.id}_${amount}`)
-                            .setLabel('Decline')
-                            .setStyle(ButtonStyle.Danger)
-                    );
+                        const adminRow = new ActionRowBuilder().addComponents(
+                            new ButtonBuilder()
+                                .setCustomId(`admin_depo_approve_${user.id}_${amount}`)
+                                .setLabel('Approve')
+                                .setStyle(ButtonStyle.Success),
+                            new ButtonBuilder()
+                                .setCustomId(`admin_depo_decline_${user.id}_${amount}`)
+                                .setLabel('Decline')
+                                .setStyle(ButtonStyle.Danger)
+                        );
 
-                    await adminUser.send({ embeds: [adminEmbed], components: [adminRow] }).catch(console.error);
+                        await adminUser.send({ embeds: [adminEmbed], components: [adminRow] }).catch(console.error);
+                    }
+
                     await interaction.followUp({ content: '✅ Admin has been notified of your payment! Your deposit will be processed shortly.', ephemeral: true }).catch(() => {});
                     return;
                 }
@@ -91,7 +123,7 @@ module.exports = (client) => {
                     try {
                         const player = await client.users.fetch(targetUserId);
                         await player.send(`🎉 **Deposit Approved!** Your deposit of **$${amount.toLocaleString()}** has been accepted!`);
-                    } catch (e) { console.error('DM Error:', e); }
+                    } catch (e) {}
                     return;
                 }
 
@@ -105,7 +137,7 @@ module.exports = (client) => {
                     try {
                         const player = await client.users.fetch(targetUserId);
                         await player.send(`❌ Your deposit request of **$${amount.toLocaleString()}** was declined by admin.`);
-                    } catch (e) { console.error('DM Error:', e); }
+                    } catch (e) {}
                     return;
                 }
 
@@ -118,8 +150,8 @@ module.exports = (client) => {
 
                     try {
                         const player = await client.users.fetch(targetUserId);
-                        await player.send(`🎉 Your withdrawal of **$${amount.toLocaleString()}** has been paid in-game! Please leave a vouch in the channel!`);
-                    } catch (e) { console.error('DM Error:', e); }
+                        await player.send(`🎉 Your withdrawal of **$${amount.toLocaleString()}** has been paid in-game!`);
+                    } catch (e) {}
                     return;
                 }
 
@@ -131,16 +163,16 @@ module.exports = (client) => {
                     const { data: targetUser } = await supabase.from('balances').select('*').eq('user_id', targetUserId).single();
                     await supabase.from('balances').update({ balance: (targetUser?.balance || 0) + amount }).eq('user_id', targetUserId);
 
-                    await interaction.editReply({ content: `❌ **Declined Withdrawal for <@${targetUserId}> ($${amount.toLocaleString()}). Balance refunded.**`, embeds: [], components: [] }).catch(() => {});
+                    await interaction.editReply({ content: `❌ **Declined Withdrawal for <@${targetUserId}> ($${amount.toLocaleString()}). Refunded.**`, embeds: [], components: [] }).catch(() => {});
 
                     try {
                         const player = await client.users.fetch(targetUserId);
-                        await player.send(`❌ Your withdrawal request of **$${amount.toLocaleString()}** was declined. Your funds have been refunded to your bot balance.`);
-                    } catch (e) { console.error('DM Error:', e); }
+                        await player.send(`❌ Your withdrawal request of **$${amount.toLocaleString()}** was declined. Balance refunded.`);
+                    } catch (e) {}
                     return;
                 }
 
-                // 7. Custom Win Percentage Modal Trigger
+                // 7. Custom Win % Modal Trigger
                 if (customId.startsWith('win_custom_btn_')) {
                     const game = customId.replace('win_custom_btn_', '');
                     const modal = new ModalBuilder()
@@ -159,19 +191,19 @@ module.exports = (client) => {
                     return;
                 }
 
-                // 8. Preset Win Buttons Clicked
+                // 8. Win Odds Option Buttons
                 if (customId.startsWith('set_win_chance_')) {
                     const parts = customId.split('_');
                     const game = parts[3];
                     const chance = parseFloat(parts[4]);
 
                     await supabase.from('game_settings').upsert({ game_name: game, win_chance: chance });
-                    await interaction.editReply({ content: `⚙️ **Updated ${game.toUpperCase()} win chance to ${chance}%**`, components: [] }).catch(() => {});
+                    await interaction.editReply({ content: `⚙️ **Updated ${game.toUpperCase()} win chance to${chance}%**`, components: [] }).catch(() => {});
                     return;
                 }
             }
 
-            // --- SELECT MENU HANDLERS ---
+            // --- SELECT MENU HANDLER ---
             if (interaction.isStringSelectMenu()) {
                 if (interaction.customId === 'select_win_game') {
                     const selectedGame = interaction.values[0];
@@ -196,7 +228,7 @@ module.exports = (client) => {
                 }
             }
 
-            // --- MODAL SUBMIT HANDLERS ---
+            // --- MODAL SUBMIT HANDLER ---
             if (interaction.isModalSubmit()) {
                 if (interaction.customId.startsWith('win_custom_modal_')) {
                     const game = interaction.customId.replace('win_custom_modal_', '');
@@ -208,7 +240,7 @@ module.exports = (client) => {
                     }
 
                     await supabase.from('game_settings').upsert({ game_name: game, win_chance: chance });
-                    await interaction.reply({ content: `⚙️ **Custom win chance set to ${chance}% for ${game.toUpperCase()}!**`, ephemeral: true });
+                    await interaction.reply({ content: `⚙️ **Custom win chance set to ${chance}\% for${game.toUpperCase()}!**`, ephemeral: true });
                 }
             }
         } catch (err) {
