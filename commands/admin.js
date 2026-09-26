@@ -25,7 +25,7 @@ async function handleAdminCommands(command, args, message, prefix) {
 
             const userData = await getOrCreateUser(targetUser.id, targetUser.username);
             const newBalance = (userData.balance || 0) + amount;
-            const newWager = (userData.wager_required || 0) + amount; // Adding balance adds wager requirement
+            const newWager = (userData.wager_required || 0) + amount;
 
             const { error } = await supabase.from('balances').upsert({
                 user_id: targetUser.id,
@@ -121,10 +121,53 @@ async function handleAdminCommands(command, args, message, prefix) {
             return true;
         }
 
+        // --- TIP / PAY COMMAND ---
+        if (['pay', 'tip'].includes(command)) {
+            const targetUser = message.mentions.users.first();
+            const rawAmount = args[1];
+
+            if (!targetUser || targetUser.id === message.author.id) {
+                await message.reply(`❌ **Usage:** \`${prefix}tip @user <amount>\``);
+                return true;
+            }
+
+            const amount = parseAmount(rawAmount);
+            if (!amount || amount <= 0) {
+                await message.reply('❌ **Invalid amount.**');
+                return true;
+            }
+
+            const sender = await getOrCreateUser(message.author.id, message.author.username);
+            if ((sender.balance || 0) < amount) {
+                await message.reply(`❌ Insufficient balance! Your balance: **$${(sender.balance || 0).toLocaleString()}**`);
+                return true;
+            }
+
+            const receiver = await getOrCreateUser(targetUser.id, targetUser.username);
+
+            // Deduct balance from sender
+            await supabase.from('balances').upsert({
+                user_id: message.author.id,
+                username: message.author.username,
+                balance: sender.balance - amount
+            }, { onConflict: 'user_id' });
+
+            // Add balance & wager requirement to recipient
+            await supabase.from('balances').upsert({
+                user_id: targetUser.id,
+                username: targetUser.username,
+                balance: (receiver.balance || 0) + amount,
+                wager_required: (receiver.wager_required || 0) + amount
+            }, { onConflict: 'user_id' });
+
+            await message.reply(`💸 You tipped **$${amount.toLocaleString()}** to ${targetUser.username}!`);
+            return true;
+        }
+
         return false;
     } catch (err) {
         console.error('❌ Error in admin command:', err);
-        await message.reply('❌ An error occurred executing that admin command.');
+        await message.reply('❌ An error occurred executing that command.');
         return true;
     }
 }
