@@ -10,10 +10,10 @@ async function handleGameCommands(command, args, message, prefix) {
         const username = message.author.username;
         const user = await getOrCreateUser(userId, username);
 
-        // --- LIMBO COMMAND (CURVED COUNT-UP ANIMATION) ---
+        // --- LIMBO COMMAND (10% HOUSE EDGE & SMOOTH CURVE) ---
         if (['limbo', 'lb'].includes(command)) {
             if (args.length < 2) {
-                await message.reply(`❌ **Usage:** \`${prefix}limbo <amount> <multiplier>\` or \`${prefix}limbo <multiplier> <amount>\`\n*Example:* \`${prefix}limbo 1m 1.5x\``);
+                await message.reply(`❌ **Usage:** \`${prefix}limbo <amount> <multiplier>\` or \`${prefix}limbo <multiplier> <amount>\`\n*Example:* \`${prefix}limbo 100k 10x\``);
                 return true;
             }
 
@@ -27,11 +27,11 @@ async function handleGameCommands(command, args, message, prefix) {
                 rawMultiplier = args[1];
             }
 
-            const cleanMultiplier = parseFloat(rawMultiplier.replace(/x/gi, ''));
+            const targetMultiplier = parseFloat(rawMultiplier.replace(/x/gi, ''));
             const betAmount = parseAmount(rawAmount);
 
-            if (isNaN(cleanMultiplier) || cleanMultiplier <= 1.01) {
-                await message.reply('❌ **Target multiplier must be a number greater than 1.01x.**');
+            if (isNaN(targetMultiplier) || targetMultiplier <= 1.01) {
+                await message.reply('❌ **Target multiplier must be greater than 1.01x.**');
                 return true;
             }
 
@@ -45,26 +45,32 @@ async function handleGameCommands(command, args, message, prefix) {
                 return true;
             }
 
-            const { data: settings } = await supabase.from('game_settings').select('*').eq('game_name', 'limbo').single();
-            const winChance = settings?.win_chance !== undefined ? settings.win_chance : 45;
+            // --- REALISTIC LIMBO MATH (10% HOUSE EDGE) ---
+            // House Edge = 10% => Multiplier Scale = 0.90
+            const houseEdgeFactor = 0.90;
+            const trueWinProbability = houseEdgeFactor / targetMultiplier; // e.g. 10x target -> 0.09 (9% chance)
 
-            const isWin = (Math.random() * 100) < winChance;
+            const randomValue = Math.random(); // Range: 0.0 to 1.0
+            const won = randomValue < trueWinProbability;
+
             let finalRolled;
-
-            if (isWin) {
-                finalRolled = (cleanMultiplier + (Math.random() * cleanMultiplier)).toFixed(2);
+            if (won) {
+                // Generates smooth winning multiplier above target
+                const maxWinMultiplier = targetMultiplier * 1.5;
+                finalRolled = (targetMultiplier + Math.random() * (maxWinMultiplier - targetMultiplier)).toFixed(2);
             } else {
-                finalRolled = (1.00 + Math.random() * (cleanMultiplier - 1.01)).toFixed(2);
+                // Multiplier crashes below target curve
+                const rolledValue = Math.max(1.00, 1.00 / (1.00 - (randomValue * houseEdgeFactor)));
+                finalRolled = Math.min(rolledValue, targetMultiplier - 0.01).toFixed(2);
             }
 
             const targetRolled = parseFloat(finalRolled);
-            const won = targetRolled >= cleanMultiplier;
 
             let newBalance = user.balance;
             let rakebackAdded = 0;
 
             if (won) {
-                const profit = betAmount * (cleanMultiplier - 1);
+                const profit = betAmount * (targetMultiplier - 1);
                 newBalance += profit;
             } else {
                 newBalance -= betAmount;
@@ -79,12 +85,12 @@ async function handleGameCommands(command, args, message, prefix) {
                 wager_required: newWagerReq
             }).eq('user_id', userId);
 
-            // Step 1: Initial starting message at 1.00x
+            // --- ANIMATED COUNT-UP (SMOOTH CUBIC CURVE) ---
             const initialEmbed = new EmbedBuilder()
                 .setColor('#F39C12')
                 .setTitle('🚀 Limbo — Launching...')
                 .addFields(
-                    { name: 'Target', value: `${cleanMultiplier}x`, inline: true },
+                    { name: 'Target', value: `${targetMultiplier}x`, inline: true },
                     { name: 'Current Multiplier', value: `\`1.00x\``, inline: true },
                     { name: 'Bet Amount', value: `$${betAmount.toLocaleString()}`, inline: true }
                 )
@@ -92,19 +98,19 @@ async function handleGameCommands(command, args, message, prefix) {
 
             const gameMsg = await message.reply({ embeds: [initialEmbed] });
 
-            // Step 2: Exponential count-up steps (Curve Effect)
-            const steps = [0.25, 0.55, 0.82, 1.0];
-            for (const progress of steps) {
-                await sleep(600);
+            // 5 Smooth count steps
+            const curveSteps = [0.15, 0.35, 0.60, 0.85, 1.0];
+            for (const progress of curveSteps) {
+                await sleep(400);
 
-                // Curved exponential interpolation: 1 + (final - 1) * progress^2
-                const currentStepVal = (1 + (targetRolled - 1) * Math.pow(progress, 2)).toFixed(2);
+                // Cubic ease-out curve calculation
+                const currentStepVal = (1.00 + (targetRolled - 1.00) * Math.pow(progress, 3)).toFixed(2);
 
                 const stepEmbed = new EmbedBuilder()
                     .setColor('#F39C12')
                     .setTitle('🚀 Limbo — Climbing...')
                     .addFields(
-                        { name: 'Target', value: `${cleanMultiplier}x`, inline: true },
+                        { name: 'Target', value: `${targetMultiplier}x`, inline: true },
                         { name: 'Current Multiplier', value: `\`${currentStepVal}x\``, inline: true },
                         { name: 'Bet Amount', value: `$${betAmount.toLocaleString()}`, inline: true }
                     )
@@ -113,17 +119,17 @@ async function handleGameCommands(command, args, message, prefix) {
                 await gameMsg.edit({ embeds: [stepEmbed] }).catch(() => {});
             }
 
-            await sleep(500);
+            await sleep(300);
 
-            // Step 3: Final crash / victory reveal
+            // Final Reveal
             const finalEmbed = new EmbedBuilder()
                 .setColor(won ? '#2ECC71' : '#E74C3C')
                 .setTitle(won ? '🚀 Limbo — YOU WON!' : '💥 Limbo — CRASHED!')
                 .addFields(
-                    { name: 'Target', value: `${cleanMultiplier}x`, inline: true },
+                    { name: 'Target', value: `${targetMultiplier}x`, inline: true },
                     { name: 'Rolled', value: `${finalRolled}x`, inline: true },
                     { name: 'Bet Amount', value: `$${betAmount.toLocaleString()}`, inline: true },
-                    { name: won ? 'Profit' : 'Loss', value: won ? `+$${(betAmount * (cleanMultiplier - 1)).toLocaleString()}` : `-$${betAmount.toLocaleString()}`, inline: true },
+                    { name: won ? 'Profit' : 'Loss', value: won ? `+$${(betAmount * (targetMultiplier - 1)).toLocaleString()}` : `-$${betAmount.toLocaleString()}`, inline: true },
                     { name: 'New Balance', value: `$${newBalance.toLocaleString()}`, inline: true }
                 )
                 .setFooter({ text: 'Donut Bet Bot' });
@@ -132,7 +138,7 @@ async function handleGameCommands(command, args, message, prefix) {
             return true;
         }
 
-        // --- COINFLIP COMMAND (WITH SHUFFLE EDIT ANIMATION) ---
+        // --- COINFLIP COMMAND ---
         if (['cf', 'coinflip'].includes(command)) {
             const side = args[0]?.toLowerCase();
             const betAmount = parseAmount(args[1]);
@@ -149,7 +155,6 @@ async function handleGameCommands(command, args, message, prefix) {
                 return true;
             }
 
-            // Step 1: Initial flip message
             const flipEmbed = new EmbedBuilder()
                 .setColor('#F1C40F')
                 .setTitle('🪙 Coinflip — Flipping...')
@@ -159,10 +164,9 @@ async function handleGameCommands(command, args, message, prefix) {
 
             const gameMsg = await message.reply({ embeds: [flipEmbed] });
 
-            // Step 2: Rapid Shuffle animation edits
             const shuffleStates = ['🌀 `TAILS`', '🌀 `HEADS`', '🌀 `TAILS`'];
             for (const stateText of shuffleStates) {
-                await sleep(500);
+                await sleep(400);
 
                 const shuffleEmbed = new EmbedBuilder()
                     .setColor('#F1C40F')
@@ -198,9 +202,8 @@ async function handleGameCommands(command, args, message, prefix) {
                 wager_required: newWagerReq
             }).eq('user_id', userId);
 
-            await sleep(600);
+            await sleep(400);
 
-            // Step 3: Reveal outcome
             const resultEmbed = new EmbedBuilder()
                 .setColor(isWin ? '#2ECC71' : '#E74C3C')
                 .setTitle(isWin ? '🪙 Coinflip — YOU WON!' : '🪙 Coinflip — YOU LOST!')
