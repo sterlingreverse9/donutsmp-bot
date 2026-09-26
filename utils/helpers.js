@@ -6,9 +6,13 @@ async function getOrCreateUser(userId, username) {
     if (!user) {
         const { data: newUser, error } = await supabase.from('balances').insert({
             user_id: userId,
-            username: username,
+            username: username || 'Unknown',
             balance: 0,
-            claimed_starter_bonus: false
+            claimed_starter_bonus: false,
+            rakeback: 0,
+            wager_required: 0,
+            unclaimed_ref_rewards: 0,
+            deposit_count: 0
         }).select().single();
 
         if (error) console.error('Error creating user:', error);
