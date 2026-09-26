@@ -16,15 +16,19 @@ module.exports = (client) => {
                 // /start or /help
                 if (['start', 'help'].includes(commandName)) {
                     let bonusMsg = '';
-                    
+
                     if (!dbUser || dbUser.claimed_starter_bonus !== true) {
                         const currentBal = dbUser?.balance || 0;
-                        await supabase.from('balances').upsert({
-                            user_id: user.id,
-                            username: user.username,
-                            balance: currentBal + 1000000,
-                            claimed_starter_bonus: true
-                        });
+                        const newBalance = currentBal + 1000000;
+
+                        await supabase
+                            .from('balances')
+                            .update({
+                                balance: newBalance,
+                                claimed_starter_bonus: true,
+                                username: user.username
+                            })
+                            .eq('user_id', user.id);
 
                         bonusMsg = '\n\n🎉 **Starter Bonus Claimed!** Added **$1,000,000** to your balance!';
                     }
@@ -83,13 +87,16 @@ module.exports = (client) => {
 
                 // /bal
                 if (commandName === 'bal' || commandName === 'balance') {
+                    const { data: freshUser } = await supabase.from('balances').select('*').eq('user_id', user.id).single();
+                    const activeUser = freshUser || dbUser;
+
                     const embed = new EmbedBuilder()
                         .setColor('#2ECC71')
                         .setTitle(`💰 ${user.username}'s Balance`)
                         .addFields(
-                            { name: 'Balance', value: `$${(dbUser?.balance || 0).toLocaleString()}`, inline: true },
-                            { name: 'Rakeback', value: `$${(dbUser?.rakeback || 0).toLocaleString()}`, inline: true },
-                            { name: 'Wager Required', value: `$${(dbUser?.wager_required || 0).toLocaleString()}`, inline: true }
+                            { name: 'Balance', value: `$${(activeUser?.balance || 0).toLocaleString()}`, inline: true },
+                            { name: 'Rakeback', value: `$${(activeUser?.rakeback || 0).toLocaleString()}`, inline: true },
+                            { name: 'Wager Required', value: `$${(activeUser?.wager_required || 0).toLocaleString()}`, inline: true }
                         );
 
                     await interaction.editReply({ embeds: [embed] });
@@ -138,7 +145,7 @@ module.exports = (client) => {
                 }
             }
 
-            // --- SELECT MENU HANDLER (DIRECT RESPONSE TO PREVENT TIMEOUTS) ---
+            // --- SELECT MENU HANDLER ---
             if (interaction.isStringSelectMenu()) {
                 if (interaction.customId === 'select_win_game') {
                     const selectedGame = interaction.values[0];
@@ -168,14 +175,34 @@ module.exports = (client) => {
             if (interaction.isButton()) {
                 const { customId, user } = interaction;
 
+                // Handle Custom Modal BEFORE deferring!
+                if (customId.startsWith('win_custom_btn_')) {
+                    const game = customId.replace('win_custom_btn_', '');
+                    const modal = new ModalBuilder()
+                        .setCustomId(`win_custom_modal_${game}`)
+                        .setTitle('Custom Win Percentage');
+
+                    const input = new TextInputBuilder()
+                        .setCustomId('win_percent_input')
+                        .setLabel('Enter Win Percentage (0 - 100)')
+                        .setStyle(TextInputStyle.Short)
+                        .setPlaceholder('e.g., 65')
+                        .setRequired(true);
+
+                    modal.addComponents(new ActionRowBuilder().addComponents(input));
+                    await interaction.showModal(modal);
+                    return;
+                }
+
+                // Defer for non-modal buttons
+                await interaction.deferUpdate().catch(() => {});
+
                 if (customId === 'claim_ref_rewards') {
-                    await interaction.deferUpdate().catch(() => {});
                     await processRefClaim(user.id, interaction);
                     return;
                 }
 
                 if (customId.startsWith('depo_paid_')) {
-                    await interaction.deferUpdate().catch(() => {});
                     const amount = parseFloat(customId.split('_')[2]);
                     const { data: userData } = await supabase.from('balances').select('*').eq('user_id', user.id).single();
 
@@ -212,7 +239,6 @@ module.exports = (client) => {
                 }
 
                 if (customId.startsWith('admin_depo_approve_')) {
-                    await interaction.deferUpdate().catch(() => {});
                     const [, , , targetUserId, rawAmount] = customId.split('_');
                     const amount = parseFloat(rawAmount);
 
@@ -249,7 +275,6 @@ module.exports = (client) => {
                 }
 
                 if (customId.startsWith('admin_depo_decline_')) {
-                    await interaction.deferUpdate().catch(() => {});
                     const [, , , targetUserId, rawAmount] = customId.split('_');
                     const amount = parseFloat(rawAmount);
 
@@ -263,7 +288,6 @@ module.exports = (client) => {
                 }
 
                 if (customId.startsWith('admin_withdraw_approve_')) {
-                    await interaction.deferUpdate().catch(() => {});
                     const [, , , targetUserId, rawAmount] = customId.split('_');
                     const amount = parseFloat(rawAmount);
 
@@ -277,7 +301,6 @@ module.exports = (client) => {
                 }
 
                 if (customId.startsWith('admin_withdraw_decline_')) {
-                    await interaction.deferUpdate().catch(() => {});
                     const [, , , targetUserId, rawAmount] = customId.split('_');
                     const amount = parseFloat(rawAmount);
 
@@ -294,31 +317,12 @@ module.exports = (client) => {
                 }
 
                 if (customId.startsWith('set_win_chance_')) {
-                    await interaction.deferUpdate().catch(() => {});
                     const parts = customId.split('_');
                     const game = parts[3];
                     const chance = parseFloat(parts[4]);
 
                     await supabase.from('game_settings').upsert({ game_name: game, win_chance: chance });
                     await interaction.editReply({ content: `⚙️ **Updated ${game.toUpperCase()} win chance to ${chance}%!**`, components: [] }).catch(() => {});
-                    return;
-                }
-
-                if (customId.startsWith('win_custom_btn_')) {
-                    const game = customId.replace('win_custom_btn_', '');
-                    const modal = new ModalBuilder()
-                        .setCustomId(`win_custom_modal_${game}`)
-                        .setTitle('Custom Win Percentage');
-
-                    const input = new TextInputBuilder()
-                        .setCustomId('win_percent_input')
-                        .setLabel('Enter Win Percentage (0 - 100)')
-                        .setStyle(TextInputStyle.Short)
-                        .setPlaceholder('e.g., 65')
-                        .setRequired(true);
-
-                    modal.addComponents(new ActionRowBuilder().addComponents(input));
-                    await interaction.showModal(modal);
                     return;
                 }
             }
