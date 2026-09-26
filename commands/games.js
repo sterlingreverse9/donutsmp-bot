@@ -4,7 +4,7 @@ const { EmbedBuilder } = require('discord.js');
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-// Table-based win probability formula (10% House Edge)
+// Table-based win probability calculation
 function getLimboWinChance(target) {
     if (target >= 1.01 && target <= 1.10) return 90 / target;      
     if (target > 1.10 && target <= 1.20) return 90 / target;       
@@ -22,11 +22,11 @@ function getLimboWinChance(target) {
     return 0.89;
 }
 
-// Generates a naturally distributed random crash multiplier via exponential curve
+// Generates natural crash multiplier distributions
 function generateNaturalCrash() {
     const u = Math.random();
     let val = 0.90 / (1 - u);
-    if (val < 1.00 || Math.random() < 0.08) val = 1.00; // ~8% instant crash rate
+    if (val < 1.00 || Math.random() < 0.08) val = 1.00;
     return Math.min(100, val);
 }
 
@@ -56,7 +56,6 @@ async function handleGameCommands(command, args, message, prefix) {
             const targetMultiplier = parseFloat(rawMultiplier.replace(/x/gi, ''));
             const betAmount = parseAmount(rawAmount);
 
-            // Strict bounds enforcement: 1.01x to 100x
             if (isNaN(targetMultiplier) || targetMultiplier < 1.01 || targetMultiplier > 100) {
                 await message.reply('❌ **Target multiplier must be between 1.01x and 100x.**');
                 return true;
@@ -72,21 +71,17 @@ async function handleGameCommands(command, args, message, prefix) {
                 return true;
             }
 
-            // Determine outcome based on bracket win chance
             const winChancePercent = getLimboWinChance(targetMultiplier);
             const won = (Math.random() * 100) < winChancePercent;
 
             let finalRolled;
-
             if (won) {
-                // Generate natural outcome equal to or higher than target
                 let rolledVal = generateNaturalCrash();
                 while (rolledVal < targetMultiplier) {
                     rolledVal = generateNaturalCrash();
                 }
                 finalRolled = rolledVal.toFixed(2);
             } else {
-                // Generate natural outcome lower than target
                 let rolledVal = generateNaturalCrash();
                 while (rolledVal >= targetMultiplier) {
                     rolledVal = generateNaturalCrash();
@@ -109,11 +104,13 @@ async function handleGameCommands(command, args, message, prefix) {
 
             const newWagerReq = Math.max(0, (user.wager_required || 0) - betAmount);
 
-            await supabase.from('balances').update({
+            await supabase.from('balances').upsert({
+                user_id: userId,
+                username: username,
                 balance: newBalance,
                 rakeback: (user.rakeback || 0) + rakebackAdded,
                 wager_required: newWagerReq
-            }).eq('user_id', userId);
+            }, { onConflict: 'user_id' });
 
             // --- ANIMATION UI ---
             const initialEmbed = new EmbedBuilder()
@@ -149,7 +146,6 @@ async function handleGameCommands(command, args, message, prefix) {
 
             await sleep(250);
 
-            // Final Result Reveal
             const finalEmbed = new EmbedBuilder()
                 .setColor(won ? '#2ECC71' : '#E74C3C')
                 .setTitle(won ? '🚀 Limbo — YOU WON!' : '💥 Limbo — CRASHED!')
@@ -224,11 +220,13 @@ async function handleGameCommands(command, args, message, prefix) {
 
             const newWagerReq = Math.max(0, (user.wager_required || 0) - betAmount);
 
-            await supabase.from('balances').update({
+            await supabase.from('balances').upsert({
+                user_id: userId,
+                username: username,
                 balance: newBalance,
                 rakeback: (user.rakeback || 0) + rakebackAdded,
                 wager_required: newWagerReq
-            }).eq('user_id', userId);
+            }, { onConflict: 'user_id' });
 
             await sleep(350);
 
