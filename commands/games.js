@@ -2,7 +2,6 @@ const supabase = require('../config/supabase');
 const { parseAmount, getOrCreateUser } = require('../utils/helpers');
 const { EmbedBuilder } = require('discord.js');
 
-// Utility delay for suspense animation
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function handleGameCommands(command, args, message, prefix) {
@@ -11,7 +10,7 @@ async function handleGameCommands(command, args, message, prefix) {
         const username = message.author.username;
         const user = await getOrCreateUser(userId, username);
 
-        // --- LIMBO COMMAND ---
+        // --- LIMBO COMMAND (CURVED COUNT-UP ANIMATION) ---
         if (['limbo', 'lb'].includes(command)) {
             if (args.length < 2) {
                 await message.reply(`❌ **Usage:** \`${prefix}limbo <amount> <multiplier>\` or \`${prefix}limbo <multiplier> <amount>\`\n*Example:* \`${prefix}limbo 1m 1.5x\``);
@@ -20,7 +19,6 @@ async function handleGameCommands(command, args, message, prefix) {
 
             let rawMultiplier, rawAmount;
 
-            // Flexible order detection: check which argument contains 'x' or a decimal multiplier
             if (args[0].toLowerCase().includes('x') || (!isNaN(parseFloat(args[0])) && parseFloat(args[0]) > 1 && !args[0].toLowerCase().includes('k') && !args[0].toLowerCase().includes('m'))) {
                 rawMultiplier = args[0];
                 rawAmount = args[1];
@@ -47,20 +45,21 @@ async function handleGameCommands(command, args, message, prefix) {
                 return true;
             }
 
-            // Get game settings from DB
             const { data: settings } = await supabase.from('game_settings').select('*').eq('game_name', 'limbo').single();
             const winChance = settings?.win_chance !== undefined ? settings.win_chance : 45;
 
             const isWin = (Math.random() * 100) < winChance;
-            let rolledMultiplier;
+            let finalRolled;
 
             if (isWin) {
-                rolledMultiplier = (cleanMultiplier + (Math.random() * cleanMultiplier)).toFixed(2);
+                finalRolled = (cleanMultiplier + (Math.random() * cleanMultiplier)).toFixed(2);
             } else {
-                rolledMultiplier = (1.00 + Math.random() * (cleanMultiplier - 1.01)).toFixed(2);
+                finalRolled = (1.00 + Math.random() * (cleanMultiplier - 1.01)).toFixed(2);
             }
 
-            const won = parseFloat(rolledMultiplier) >= cleanMultiplier;
+            const targetRolled = parseFloat(finalRolled);
+            const won = targetRolled >= cleanMultiplier;
+
             let newBalance = user.balance;
             let rakebackAdded = 0;
 
@@ -80,23 +79,60 @@ async function handleGameCommands(command, args, message, prefix) {
                 wager_required: newWagerReq
             }).eq('user_id', userId);
 
-            const embed = new EmbedBuilder()
+            // Step 1: Initial starting message at 1.00x
+            const initialEmbed = new EmbedBuilder()
+                .setColor('#F39C12')
+                .setTitle('🚀 Limbo — Launching...')
+                .addFields(
+                    { name: 'Target', value: `${cleanMultiplier}x`, inline: true },
+                    { name: 'Current Multiplier', value: `\`1.00x\``, inline: true },
+                    { name: 'Bet Amount', value: `$${betAmount.toLocaleString()}`, inline: true }
+                )
+                .setFooter({ text: 'Donut Bet Bot' });
+
+            const gameMsg = await message.reply({ embeds: [initialEmbed] });
+
+            // Step 2: Exponential count-up steps (Curve Effect)
+            const steps = [0.25, 0.55, 0.82, 1.0];
+            for (const progress of steps) {
+                await sleep(600);
+
+                // Curved exponential interpolation: 1 + (final - 1) * progress^2
+                const currentStepVal = (1 + (targetRolled - 1) * Math.pow(progress, 2)).toFixed(2);
+
+                const stepEmbed = new EmbedBuilder()
+                    .setColor('#F39C12')
+                    .setTitle('🚀 Limbo — Climbing...')
+                    .addFields(
+                        { name: 'Target', value: `${cleanMultiplier}x`, inline: true },
+                        { name: 'Current Multiplier', value: `\`${currentStepVal}x\``, inline: true },
+                        { name: 'Bet Amount', value: `$${betAmount.toLocaleString()}`, inline: true }
+                    )
+                    .setFooter({ text: 'Donut Bet Bot' });
+
+                await gameMsg.edit({ embeds: [stepEmbed] }).catch(() => {});
+            }
+
+            await sleep(500);
+
+            // Step 3: Final crash / victory reveal
+            const finalEmbed = new EmbedBuilder()
                 .setColor(won ? '#2ECC71' : '#E74C3C')
                 .setTitle(won ? '🚀 Limbo — YOU WON!' : '💥 Limbo — CRASHED!')
                 .addFields(
                     { name: 'Target', value: `${cleanMultiplier}x`, inline: true },
-                    { name: 'Rolled', value: `${rolledMultiplier}x`, inline: true },
+                    { name: 'Rolled', value: `${finalRolled}x`, inline: true },
                     { name: 'Bet Amount', value: `$${betAmount.toLocaleString()}`, inline: true },
                     { name: won ? 'Profit' : 'Loss', value: won ? `+$${(betAmount * (cleanMultiplier - 1)).toLocaleString()}` : `-$${betAmount.toLocaleString()}`, inline: true },
                     { name: 'New Balance', value: `$${newBalance.toLocaleString()}`, inline: true }
                 )
                 .setFooter({ text: 'Donut Bet Bot' });
 
-            await message.reply({ embeds: [embed] });
+            await gameMsg.edit({ embeds: [finalEmbed] }).catch(() => {});
             return true;
         }
 
-        // --- COINFLIP COMMAND (WITH ANIMATED SUSPENSE UI) ---
+        // --- COINFLIP COMMAND (WITH SHUFFLE EDIT ANIMATION) ---
         if (['cf', 'coinflip'].includes(command)) {
             const side = args[0]?.toLowerCase();
             const betAmount = parseAmount(args[1]);
@@ -113,15 +149,30 @@ async function handleGameCommands(command, args, message, prefix) {
                 return true;
             }
 
-            // Suspense UI Step 1: Send spinning state
-            const spinningEmbed = new EmbedBuilder()
+            // Step 1: Initial flip message
+            const flipEmbed = new EmbedBuilder()
                 .setColor('#F1C40F')
                 .setTitle('🪙 Coinflip — Flipping...')
-                .setDescription(`*Flipping the coin for **$${betAmount.toLocaleString()}** on **${chosenSide.toUpperCase()}**...*`)
-                .setImage('https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExOHY1dmpyNXFiMXB5M2sxaHNjYW1wcTh3a3M1MWtzZWtsazQ2b3M1ZSZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/3o7TKTDn9761Z8Yn28/giphy.gif')
+                .setDescription(`*Flipping for **$${betAmount.toLocaleString()}** on **${chosenSide.toUpperCase()}**...*`)
+                .addFields({ name: 'State', value: '🌀 `HEADS`', inline: true })
                 .setFooter({ text: 'Donut Bet Bot' });
 
-            const gameMsg = await message.reply({ embeds: [spinningEmbed] });
+            const gameMsg = await message.reply({ embeds: [flipEmbed] });
+
+            // Step 2: Rapid Shuffle animation edits
+            const shuffleStates = ['🌀 `TAILS`', '🌀 `HEADS`', '🌀 `TAILS`'];
+            for (const stateText of shuffleStates) {
+                await sleep(500);
+
+                const shuffleEmbed = new EmbedBuilder()
+                    .setColor('#F1C40F')
+                    .setTitle('🪙 Coinflip — Flipping...')
+                    .setDescription(`*Flipping for **$${betAmount.toLocaleString()}** on **${chosenSide.toUpperCase()}**...*`)
+                    .addFields({ name: 'State', value: stateText, inline: true })
+                    .setFooter({ text: 'Donut Bet Bot' });
+
+                await gameMsg.edit({ embeds: [shuffleEmbed] }).catch(() => {});
+            }
 
             const { data: settings } = await supabase.from('game_settings').select('*').eq('game_name', 'cf').single();
             const winChance = settings?.win_chance !== undefined ? settings.win_chance : 45;
@@ -147,10 +198,9 @@ async function handleGameCommands(command, args, message, prefix) {
                 wager_required: newWagerReq
             }).eq('user_id', userId);
 
-            // Wait 2 seconds for suspense
-            await sleep(2000);
+            await sleep(600);
 
-            // Suspense UI Step 2: Reveal outcome
+            // Step 3: Reveal outcome
             const resultEmbed = new EmbedBuilder()
                 .setColor(isWin ? '#2ECC71' : '#E74C3C')
                 .setTitle(isWin ? '🪙 Coinflip — YOU WON!' : '🪙 Coinflip — YOU LOST!')
