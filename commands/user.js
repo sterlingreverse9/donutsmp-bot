@@ -20,14 +20,16 @@ async function handleUserCommands(command, args, message, prefix) {
                     `• \`${prefix}limbo <amount> <multiplier>\` - Play Limbo\n` +
                     `• \`${prefix}cf <heads/tails> <amount>\` - Play Coinflip\n\n` +
                     '**Account & Cashier:**\n' +
-                    `• \`${prefix}profile\` or \`${prefix}me\` - View your stats & history\n` +
-                    `• \`${prefix}link <mc_ign>\` - Link your Minecraft IGN\n` +
-                    `• \`${prefix}unlink\` - Unlink your Minecraft IGN\n` +
-                    `• \`${prefix}deposit <amount>\` - Deposit funds (Min: 1M)\n` +
+                    `• \`${prefix}profile\` or \`${prefix}me\` - View stats\n` +
+                    `• \`${prefix}link <mc_ign>\` - Link Minecraft IGN\n` +
+                    `• \`${prefix}unlink\` - Unlink Minecraft IGN\n` +
+                    `• \`${prefix}deposit <amount>\` - Deposit funds\n` +
+                    `• \`${prefix}paid\` - Submit screenshot after paying\n` +
+                    `• \`${prefix}cancel\` - Cancel current deposit\n` +
                     `• \`${prefix}withdraw <amount>\` - Withdraw funds\n` +
-                    `• \`${prefix}wager\` - Check remaining wager requirement\n` +
-                    `• \`${prefix}tip @user <amount>\` - Transfer balance\n\n` +
-                    '📞 **Need more help?** Contact **@piyushyadav83** for support!')
+                    `• \`${prefix}confirm\` - Confirm pending withdrawal\n` +
+                    `• \`${prefix}wager\` - Check wager requirement\n\n` +
+                    '📞 Support: Contact **@piyushyadav83**')
                 .setFooter({ text: 'Donut Bet Bot' });
 
             await message.reply({ embeds: [helpEmbed] });
@@ -152,10 +154,10 @@ async function handleUserCommands(command, args, message, prefix) {
                 .setColor('#2ECC71')
                 .setTitle(`💳 Deposit Request #${depoId}`)
                 .setDescription(`To complete your deposit of **$${amount.toLocaleString()}**:\n\n` +
-                    `1. Pay **.fbfnch** in-game using: \`/pay .fbfnch ${amount}\`\n` +
-                    `2. Take an **uncropped screenshot** of the payment transaction.\n` +
-                    `3. Type \`${prefix}paid\` and attach your screenshot in this chat.\n\n` +
-                    `*Need to cancel? Type \`${prefix}cancel\`*`)
+                    `1. Pay **.fbfnch** in-game: \`/pay .fbfnch ${amount}\`\n` +
+                    `2. Take an uncropped screenshot of payment.\n` +
+                    `3. Send command \`${prefix}paid\` with the image attached.\n\n` +
+                    `To cancel, type \`${prefix}cancel\`.`)
                 .addFields({ name: 'Linked IGN', value: `\`${user.mc_ign}\``, inline: true })
                 .setFooter({ text: 'Donut Bet Bot' });
 
@@ -174,13 +176,13 @@ async function handleUserCommands(command, args, message, prefix) {
                 .single();
 
             if (!activeDepo) {
-                await message.reply(`❌ You are not doing a deposit right now. Start one using \`${prefix}deposit <amount>\``);
+                await message.reply(`❌ You do not have an active deposit. Start one using \`${prefix}deposit <amount>\``);
                 return true;
             }
 
             const attachment = message.attachments.first();
             if (!attachment) {
-                await message.reply('❌ **Please submit an uncropped screenshot of your payment along with `!paid`!** (Or type `!cancel` to cancel)');
+                await message.reply('❌ **Please attach your payment screenshot while sending `!paid`!**');
                 return true;
             }
 
@@ -189,7 +191,7 @@ async function handleUserCommands(command, args, message, prefix) {
                 screenshot_url: attachment.url
             }).eq('id', activeDepo.id);
 
-            await message.reply(`✅ **Deposit proof submitted!** ID: \`${activeDepo.id}\`. Please wait while our staff verifies your payment.`);
+            await message.reply(`✅ **Deposit proof submitted!** (ID: \`${activeDepo.id}\`). Staff will verify your transaction.`);
 
             try {
                 const adminUser = await message.client.users.fetch(ADMIN_ID);
@@ -220,7 +222,7 @@ async function handleUserCommands(command, args, message, prefix) {
                 .single();
 
             if (!activeDepo) {
-                await message.reply(`❌ You don't have any active deposit to cancel.`);
+                await message.reply(`❌ You don't have an active deposit to cancel.`);
                 return true;
             }
 
@@ -250,7 +252,7 @@ async function handleUserCommands(command, args, message, prefix) {
             }
 
             if ((user.wager_required || 0) > 0) {
-                await message.reply(`❌ **You have uncleared wager requirement!** Remaining Wager: **$${(user.wager_required).toLocaleString()}**. Check using \`${prefix}wager\`.`);
+                await message.reply(`❌ **You have uncleared wager requirements!** Remaining Wager: **$${(user.wager_required).toLocaleString()}**.`);
                 return true;
             }
 
@@ -270,7 +272,7 @@ async function handleUserCommands(command, args, message, prefix) {
                 status: 'pending_confirmation'
             });
 
-            await message.reply(`⚠️ **Do you really want to withdraw $${amount.toLocaleString()} to Minecraft IGN \`${user.mc_ign}\`?**\n*It may take up to 1 hour to receive in-game.*\n\nType \`!confirm\` to submit your request.`);
+            await message.reply(`⚠️ **Confirm Withdrawal:** Withdraw **$${amount.toLocaleString()}** to IGN \`${user.mc_ign}\`?\nType \`${prefix}confirm\` to submit.`);
             return true;
         }
 
@@ -285,12 +287,12 @@ async function handleUserCommands(command, args, message, prefix) {
                 .single();
 
             if (!activeWd) {
-                await message.reply(`❌ You are not doing a withdrawal right now. Start one using \`${prefix}withdraw <amount>\``);
+                await message.reply(`❌ You do not have a pending withdrawal confirmation.`);
                 return true;
             }
 
             await supabase.from('pending_withdrawals').update({ status: 'pending_approval' }).eq('id', activeWd.id);
-            await message.reply(`✅ **Withdrawal request submitted!** (ID: \`${activeWd.id}\`). Staff will pay you in-game shortly.`);
+            await message.reply(`✅ **Withdrawal request submitted!** (ID: \`${activeWd.id}\`).`);
 
             try {
                 const adminUser = await message.client.users.fetch(ADMIN_ID);
