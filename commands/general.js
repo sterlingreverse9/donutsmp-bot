@@ -1,6 +1,6 @@
 const supabase = require('../config/supabase');
 const { getOrCreateUser } = require('../utils/helpers');
-const { EmbedBuilder } = require('discord.js');
+const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 
 async function handleGeneralCommands(command, args, message, prefix) {
     try {
@@ -22,6 +22,8 @@ async function handleGeneralCommands(command, args, message, prefix) {
         }
 
         if (['ref', 'refer', 'referral'].includes(command)) {
+            const user = await getOrCreateUser(message.author.id, message.author.username);
+            
             const { data: refList, error } = await supabase
                 .from('balances')
                 .select('*')
@@ -31,26 +33,38 @@ async function handleGeneralCommands(command, args, message, prefix) {
 
             const totalRefs = refList ? refList.length : 0;
             const refNames = refList && refList.length > 0
-                ? refList.map((r, idx) => {
-                    const status = r.ref_reward_claimed ? '✅ Qualified' : '⏳ Pending';
-                    const name = r.username || 'User';
-                    return `${idx + 1}. **${name}** (${status})`;
-                }).join('\n')
+                ? refList.map((r, idx) => `${idx + 1}. **${r.username || r.user_id}**`).join('\n')
                 : 'No referred users yet.';
+
+            const unclaimed = user?.unclaimed_ref_rewards || 0;
 
             const embed = new EmbedBuilder()
                 .setColor('#2ECC71')
                 .setTitle('🤝 Referral Dashboard')
                 .setDescription('Invite friends to earn massive rewards!')
                 .addFields(
-                    { name: '🎁 Reward Details', value: '• Friend deposits **$1,000,000** total\n• You receive **$5,000,000** + **2% of their lifetime losses**!' },
+                    { name: '🎁 Reward System', value: '• **3x bonus** on your referral\'s **first 2 deposits**!\n• **2% lifetime commission** on all their losses!' },
                     { name: '🔗 Your Referral ID', value: `\`${message.author.id}\``, inline: true },
                     { name: '📲 Link Command', value: `\`${prefix}linkref ${message.author.id}\``, inline: true },
+                    { name: '💵 Accumulated Unclaimed Rewards', value: `\`$${unclaimed.toLocaleString()}\``, inline: false },
                     { name: `Referred Users (${totalRefs})`, value: refNames, inline: false }
                 )
                 .setFooter({ text: 'Donut SMP Bot' });
 
-            await message.reply({ embeds: [embed] });
+            const row = new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                    .setCustomId('claim_ref_rewards')
+                    .setLabel(`Claim $${unclaimed.toLocaleString()}`)
+                    .setStyle(ButtonStyle.Success)
+                    .setDisabled(unclaimed <= 0)
+            );
+
+            await message.reply({ embeds: [embed], components: [row] });
+            return true;
+        }
+
+        if (command === 'claimref') {
+            await processRefClaim(message.author.id, message);
             return true;
         }
 
@@ -84,7 +98,7 @@ async function handleGeneralCommands(command, args, message, prefix) {
 
             await supabase
                 .from('balances')
-                .update({ referred_by: referrerId })
+                .update({ referred_by: referrerId, deposit_count: 0 })
                 .eq('user_id', message.author.id);
 
             await message.reply(`✅ Successfully linked **${referrer.username || referrer.user_id}** as your referrer!`);
@@ -116,4 +130,25 @@ async function handleGeneralCommands(command, args, message, prefix) {
     }
 }
 
-module.exports = { handleGeneralCommands };
+async function processRefClaim(userId, target) {
+    const { data: user } = await supabase.from('balances').select('*').eq('user_id', userId).single();
+    const unclaimed = user?.unclaimed_ref_rewards || 0;
+
+    if (unclaimed <= 0) {
+        const msg = '❌ You have no pending referral rewards to claim.';
+        return target.reply ? target.reply(msg) : target.followUp({ content: msg, ephemeral: true });
+    }
+
+    await supabase
+        .from('balances')
+        .update({
+            balance: (user.balance || 0) + unclaimed,
+            unclaimed_ref_rewards: 0
+        })
+        .eq('user_id', userId);
+
+    const successMsg = `🎉 **Claimed!** Added **$${unclaimed.toLocaleString()}** to your balance!`;
+    return target.reply ? target.reply(successMsg) : target.followUp({ content: successMsg, ephemeral: true });
+}
+
+module.exports = { handleGeneralCommands, processRefClaim };
