@@ -2,19 +2,19 @@ const express = require('express');
 const http = require('http');
 const { Client, GatewayIntentBits, Partials } = require('discord.js');
 
-// Import handlers into outer module scope
-let handleGeneralCommands, handleGameCommands, handleBankingCommands, handleAdminCommands, handleInteractions;
+// Direct imports without try-catch hiding load errors
+const { handleGeneralCommands } = require('./commands/general');
+const { handleGameCommands } = require('./commands/games');
+const { handleBankingCommands } = require('./commands/banking');
+const { handleAdminCommands } = require('./commands/admin');
+const { handleInteractions } = require('./handlers/interactions');
 
-try {
-    handleGeneralCommands = require('./commands/general').handleGeneralCommands;
-    handleGameCommands = require('./commands/games').handleGameCommands;
-    handleBankingCommands = require('./commands/banking').handleBankingCommands;
-    handleAdminCommands = require('./commands/admin').handleAdminCommands;
-    handleInteractions = require('./handlers/interactions').handleInteractions;
-    console.log('✅ Modules loaded successfully');
-} catch (err) {
-    console.error('❌ Error loading command modules:', err);
-}
+console.log('--- MODULE CHECK AT STARTUP ---');
+console.log('handleGeneralCommands:', typeof handleGeneralCommands);
+console.log('handleGameCommands:', typeof handleGameCommands);
+console.log('handleBankingCommands:', typeof handleBankingCommands);
+console.log('handleAdminCommands:', typeof handleAdminCommands);
+console.log('--------------------------------');
 
 const app = express();
 const PORT = process.env.PORT || 10000;
