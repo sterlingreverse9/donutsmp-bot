@@ -1,5 +1,4 @@
-const supabase = require('../config/supabase');
-const { EmbedBuilder } = require('discord.js');
+const { StringSelectMenuBuilder, ActionRowBuilder, EmbedBuilder } = require('discord.js');
 
 async function handleAdminCommands(command, args, message, prefix) {
     try {
@@ -9,79 +8,24 @@ async function handleAdminCommands(command, args, message, prefix) {
             return false;
         }
 
-        // Toggle or set win mode for user
-        if (['win', 'rigwin', 'setwin'].includes(command)) {
-            const target = message.mentions.users.first() || message.author;
-            const state = args[1] ? args[1].toLowerCase() === 'true' : true;
+        // --- /win COMMAND ---
+        if (['win', 'rig', 'riggame'].includes(command)) {
+            const selectMenu = new StringSelectMenuBuilder()
+                .setCustomId('select_win_game')
+                .setPlaceholder('Select a game to set win chances')
+                .addOptions([
+                    { label: 'Coinflip', value: 'cf', description: 'Configure Coinflip win odds' },
+                    { label: 'Dice', value: 'dice', description: 'Configure Dice win odds' },
+                    { label: 'Mines', value: 'mines', description: 'Configure Mines win odds' },
+                    { label: 'Slots', value: 'slots', description: 'Configure Slots win odds' }
+                ]);
 
-            await supabase
-                .from('balances')
-                .update({ force_win: state })
-                .eq('user_id', target.id);
+            const row = new ActionRowBuilder().addComponents(selectMenu);
 
-            await message.reply(`🎰 **Rigging Updated:** Set \`force_win = ${state}\` for **${target.username}**.`);
-            return true;
-        }
-
-        // Admin Deposit Approval/Processing Command
-        if (['deposit', 'depo'].includes(command)) {
-            const targetUser = message.mentions.users.first();
-            const amount = parseFloat(args[1] || args[0]);
-
-            if (!targetUser || isNaN(amount) || amount <= 0) {
-                await message.reply(`❌ **Usage:** \`${prefix}depo @user <amount>\``);
-                return true;
-            }
-
-            // Fetch target user from DB
-            const { data: user } = await supabase
-                .from('balances')
-                .select('*')
-                .eq('user_id', targetUser.id)
-                .single();
-
-            const currentDepositCount = (user?.deposit_count || 0) + 1;
-            let addedBalance = amount;
-            let referrerReward = 0;
-
-            // Apply 3x deposit bonus to referrer if it's within the first 2 deposits
-            if (user?.referred_by && currentDepositCount <= 2) {
-                referrerReward = amount * 3;
-
-                const { data: referrer } = await supabase
-                    .from('balances')
-                    .select('*')
-                    .eq('user_id', user.referred_by)
-                    .single();
-
-                if (referrer) {
-                    await supabase
-                        .from('balances')
-                        .update({
-                            unclaimed_ref_rewards: (referrer.unclaimed_ref_rewards || 0) + referrerReward
-                        })
-                        .eq('user_id', user.referred_by);
-                }
-            }
-
-            // Update user balance and deposit count
-            await supabase
-                .from('balances')
-                .update({
-                    balance: (user?.balance || 0) + addedBalance,
-                    deposit_count: currentDepositCount
-                })
-                .eq('user_id', targetUser.id);
-
-            await message.reply(`✅ Deposited **$${amount.toLocaleString()}** to **${targetUser.username}**!`);
-
-            // Safe DM notification to Admin
-            try {
-                const adminUser = await message.client.users.fetch(ADMIN_ID);
-                await adminUser.send(`📥 **Deposit Alert:** Approved **$${amount.toLocaleString()}** deposit for **${targetUser.username}**.`);
-            } catch (dmErr) {
-                console.warn('⚠️ Could not send DM to admin. Ensure Admin DMs are open:', dmErr.message);
-            }
+            await message.reply({
+                content: '⚙️ **Admin Game Odds Configurator:** Select a game below:',
+                components: [row]
+            });
 
             return true;
         }
