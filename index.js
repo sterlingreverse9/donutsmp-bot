@@ -1,10 +1,22 @@
 const { Client, GatewayIntentBits } = require('discord.js');
+const http = require('http');
 const supabase = require('./config/supabase');
 const botState = require('./config/botState');
 const { handleAdminCommands } = require('./commands/admin');
 const { handleGameCommands } = require('./commands/games');
 const { handleUserCommands } = require('./commands/user');
 
+// --- 1. HEALTH CHECK SERVER FOR RENDER ---
+// Listens on process.env.PORT so Render's Web Service health check passes instantly.
+const PORT = process.env.PORT || 3000;
+http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('Donut Bet Bot is alive and running!');
+}).listen(PORT, () => {
+    console.log(`🌐 Health check web server listening on port ${PORT}`);
+});
+
+// --- 2. DISCORD CLIENT SETUP ---
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -19,9 +31,13 @@ const PREFIX = '!';
 client.once('ready', async () => {
     console.log(`🤖 Logged in as ${client.user.tag}!`);
 
-    const { data } = await supabase.from('game_settings').select('is_active').eq('game_name', 'bot_status').single();
-    if (data !== null && data !== undefined) {
-        botState.setBotStatus(data.is_active);
+    try {
+        const { data } = await supabase.from('game_settings').select('is_active').eq('game_name', 'bot_status').single();
+        if (data !== null && data !== undefined) {
+            botState.setBotStatus(data.is_active);
+        }
+    } catch (err) {
+        console.error('⚠️ Could not sync initial bot_status from Supabase:', err.message);
     }
 });
 
