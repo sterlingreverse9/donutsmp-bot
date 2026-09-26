@@ -2,6 +2,9 @@ const supabase = require('../config/supabase');
 const { parseAmount, getOrCreateUser } = require('../utils/helpers');
 const { EmbedBuilder } = require('discord.js');
 
+// Utility delay for suspense animation
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 async function handleGameCommands(command, args, message, prefix) {
     try {
         const userId = message.author.id;
@@ -11,65 +14,66 @@ async function handleGameCommands(command, args, message, prefix) {
         // --- LIMBO COMMAND ---
         if (['limbo', 'lb'].includes(command)) {
             if (args.length < 2) {
-                await message.reply(`❌ **Usage:** \`${prefix}limbo <target_multiplier> <bet_amount>\`\n*Example:* \`${prefix}limbo 5x 100k\` or \`${prefix}limbo 5 100k\``);
+                await message.reply(`❌ **Usage:** \`${prefix}limbo <amount> <multiplier>\` or \`${prefix}limbo <multiplier> <amount>\`\n*Example:* \`${prefix}limbo 1m 1.5x\``);
                 return true;
             }
 
-            // Clean multiplier input (strip 'x' or 'X' if present)
-            const rawMultiplier = args[0].replace(/x/gi, '');
-            const targetMultiplier = parseFloat(rawMultiplier);
+            let rawMultiplier, rawAmount;
 
-            // Parse bet amount
-            const betAmount = parseAmount(args[1]);
+            // Flexible order detection: check which argument contains 'x' or a decimal multiplier
+            if (args[0].toLowerCase().includes('x') || (!isNaN(parseFloat(args[0])) && parseFloat(args[0]) > 1 && !args[0].toLowerCase().includes('k') && !args[0].toLowerCase().includes('m'))) {
+                rawMultiplier = args[0];
+                rawAmount = args[1];
+            } else {
+                rawAmount = args[0];
+                rawMultiplier = args[1];
+            }
 
-            if (isNaN(targetMultiplier) || targetMultiplier <= 1.01) {
-                await message.reply('❌ Target multiplier must be a number greater than **1.01x**.');
+            const cleanMultiplier = parseFloat(rawMultiplier.replace(/x/gi, ''));
+            const betAmount = parseAmount(rawAmount);
+
+            if (isNaN(cleanMultiplier) || cleanMultiplier <= 1.01) {
+                await message.reply('❌ **Target multiplier must be a number greater than 1.01x.**');
                 return true;
             }
 
             if (!betAmount || betAmount <= 0) {
-                await message.reply(`❌ Invalid bet amount. Usage: \`${prefix}limbo <multiplier> <amount>\``);
+                await message.reply(`❌ **Invalid bet amount.** Usage: \`${prefix}limbo <amount> <multiplier>\``);
                 return true;
             }
 
             if ((user?.balance || 0) < betAmount) {
-                await message.reply(`❌ You don't have enough balance! Current balance: **$${(user?.balance || 0).toLocaleString()}**`);
+                await message.reply(`❌ Insufficient balance! Your balance: **$${(user?.balance || 0).toLocaleString()}**`);
                 return true;
             }
 
-            // Fetch game odds settings from Supabase (defaulting to 45% win chance)
+            // Get game settings from DB
             const { data: settings } = await supabase.from('game_settings').select('*').eq('game_name', 'limbo').single();
-            const configuredWinChance = settings?.win_chance !== undefined ? settings.win_chance : 45;
+            const winChance = settings?.win_chance !== undefined ? settings.win_chance : 45;
 
-            // Generate rolled multiplier based on configured probability
-            const isWinRoll = (Math.random() * 100) < configuredWinChance;
+            const isWin = (Math.random() * 100) < winChance;
             let rolledMultiplier;
 
-            if (isWinRoll) {
-                // Roll higher than target
-                rolledMultiplier = (targetMultiplier + (Math.random() * targetMultiplier)).toFixed(2);
+            if (isWin) {
+                rolledMultiplier = (cleanMultiplier + (Math.random() * cleanMultiplier)).toFixed(2);
             } else {
-                // Roll lower than target
-                rolledMultiplier = (1.00 + Math.random() * (targetMultiplier - 1.01)).toFixed(2);
+                rolledMultiplier = (1.00 + Math.random() * (cleanMultiplier - 1.01)).toFixed(2);
             }
 
-            const won = parseFloat(rolledMultiplier) >= targetMultiplier;
+            const won = parseFloat(rolledMultiplier) >= cleanMultiplier;
             let newBalance = user.balance;
             let rakebackAdded = 0;
 
             if (won) {
-                const profit = betAmount * (targetMultiplier - 1);
+                const profit = betAmount * (cleanMultiplier - 1);
                 newBalance += profit;
             } else {
                 newBalance -= betAmount;
-                // Add 1% loss rakeback
                 rakebackAdded = betAmount * 0.01;
             }
 
-            // Deduct required wager
             const newWagerReq = Math.max(0, (user.wager_required || 0) - betAmount);
 
-            // Update user balance in Supabase
             await supabase.from('balances').update({
                 balance: newBalance,
                 rakeback: (user.rakeback || 0) + rakebackAdded,
@@ -80,10 +84,10 @@ async function handleGameCommands(command, args, message, prefix) {
                 .setColor(won ? '#2ECC71' : '#E74C3C')
                 .setTitle(won ? '🚀 Limbo — YOU WON!' : '💥 Limbo — CRASHED!')
                 .addFields(
-                    { name: 'Target', value: `${targetMultiplier}x`, inline: true },
+                    { name: 'Target', value: `${cleanMultiplier}x`, inline: true },
                     { name: 'Rolled', value: `${rolledMultiplier}x`, inline: true },
                     { name: 'Bet Amount', value: `$${betAmount.toLocaleString()}`, inline: true },
-                    { name: won ? 'Profit' : 'Loss', value: won ? `+$${(betAmount * (targetMultiplier - 1)).toLocaleString()}` : `-$${betAmount.toLocaleString()}`, inline: true },
+                    { name: won ? 'Profit' : 'Loss', value: won ? `+$${(betAmount * (cleanMultiplier - 1)).toLocaleString()}` : `-$${betAmount.toLocaleString()}`, inline: true },
                     { name: 'New Balance', value: `$${newBalance.toLocaleString()}`, inline: true }
                 )
                 .setFooter({ text: 'Donut Bet Bot' });
@@ -92,13 +96,13 @@ async function handleGameCommands(command, args, message, prefix) {
             return true;
         }
 
-        // --- COINFLIP COMMAND ---
+        // --- COINFLIP COMMAND (WITH ANIMATED SUSPENSE UI) ---
         if (['cf', 'coinflip'].includes(command)) {
             const side = args[0]?.toLowerCase();
             const betAmount = parseAmount(args[1]);
 
             if (!['heads', 'tails', 'h', 't'].includes(side) || !betAmount || betAmount <= 0) {
-                await message.reply(`❌ **Usage:** \`${prefix}cf <heads/tails> <amount>\`\n*Example:* \`${prefix}cf tails 100k\``);
+                await message.reply(`❌ **Usage:** \`${prefix}cf <heads/tails> <amount>\`\n*Example:* \`${prefix}cf heads 100k\``);
                 return true;
             }
 
@@ -108,6 +112,16 @@ async function handleGameCommands(command, args, message, prefix) {
                 await message.reply(`❌ Insufficient balance! Your balance: **$${(user?.balance || 0).toLocaleString()}**`);
                 return true;
             }
+
+            // Suspense UI Step 1: Send spinning state
+            const spinningEmbed = new EmbedBuilder()
+                .setColor('#F1C40F')
+                .setTitle('🪙 Coinflip — Flipping...')
+                .setDescription(`*Flipping the coin for **$${betAmount.toLocaleString()}** on **${chosenSide.toUpperCase()}**...*`)
+                .setImage('https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExOHY1dmpyNXFiMXB5M2sxaHNjYW1wcTh3a3M1MWtzZWtsazQ2b3M1ZSZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/3o7TKTDn9761Z8Yn28/giphy.gif')
+                .setFooter({ text: 'Donut Bet Bot' });
+
+            const gameMsg = await message.reply({ embeds: [spinningEmbed] });
 
             const { data: settings } = await supabase.from('game_settings').select('*').eq('game_name', 'cf').single();
             const winChance = settings?.win_chance !== undefined ? settings.win_chance : 45;
@@ -133,7 +147,11 @@ async function handleGameCommands(command, args, message, prefix) {
                 wager_required: newWagerReq
             }).eq('user_id', userId);
 
-            const embed = new EmbedBuilder()
+            // Wait 2 seconds for suspense
+            await sleep(2000);
+
+            // Suspense UI Step 2: Reveal outcome
+            const resultEmbed = new EmbedBuilder()
                 .setColor(isWin ? '#2ECC71' : '#E74C3C')
                 .setTitle(isWin ? '🪙 Coinflip — YOU WON!' : '🪙 Coinflip — YOU LOST!')
                 .addFields(
@@ -144,7 +162,7 @@ async function handleGameCommands(command, args, message, prefix) {
                 )
                 .setFooter({ text: 'Donut Bet Bot' });
 
-            await message.reply({ embeds: [embed] });
+            await gameMsg.edit({ embeds: [resultEmbed] }).catch(() => {});
             return true;
         }
 
