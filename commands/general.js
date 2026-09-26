@@ -18,6 +18,7 @@ async function handleGeneralCommands(command, args, message, prefix) {
                         value: [
                             `\`${prefix}bal\` - Check balance`,
                             `\`${prefix}ref\` - Referral dashboard & claim`,
+                            `\`${prefix}linkref <referrer_id>\` - Link your referrer`,
                             `\`${prefix}link <MC_IGN>\` - Link MC username`,
                             `\`${prefix}unlink\` - Remove linked IGN`,
                             `\`${prefix}wager\` - Check wager requirement`,
@@ -35,7 +36,6 @@ async function handleGeneralCommands(command, args, message, prefix) {
                     {
                         name: '🎲 Games',
                         value: [
-                            `\`${prefix}limbo <amount> <multiplier>\` - Limbo game`,
                             `\`${prefix}cf <amount> <heads/tails>\` - Coinflip game`
                         ].join('\n')
                     }
@@ -91,6 +91,43 @@ async function handleGeneralCommands(command, args, message, prefix) {
                 .eq('user_id', message.author.id);
 
             await message.reply('✅ Successfully unlinked your Minecraft account!');
+            return true;
+        }
+
+        // --- LINK REF COMMAND ---
+        if (['linkref', 'ref' + 'link'].includes(command)) {
+            const referrerId = args[0];
+
+            if (!referrerId) {
+                await message.reply(`❌ **Usage:** \`${prefix}linkref <referrer_user_id>\``);
+                return true;
+            }
+            if (referrerId === message.author.id) {
+                await message.reply('❌ You cannot refer yourself!');
+                return true;
+            }
+            if (user?.referred_by) {
+                await message.reply('❌ You have already linked a referrer.');
+                return true;
+            }
+
+            const { data: referrer } = await supabase
+                .from('balances')
+                .select('*')
+                .eq('user_id', referrerId)
+                .single();
+
+            if (!referrer) {
+                await message.reply('❌ Invalid referrer User ID.');
+                return true;
+            }
+
+            await supabase
+                .from('balances')
+                .update({ referred_by: referrerId, deposit_count: 0 })
+                .eq('user_id', message.author.id);
+
+            await message.reply(`✅ Successfully linked **${referrer.username || referrer.user_id}** as your referrer!`);
             return true;
         }
 
@@ -171,7 +208,6 @@ async function handleGeneralCommands(command, args, message, prefix) {
                 return true;
             }
 
-            // Deduct balance immediately pending payout
             await supabase
                 .from('balances')
                 .update({ balance: user.balance - amount })
@@ -179,11 +215,10 @@ async function handleGeneralCommands(command, args, message, prefix) {
 
             await message.reply('✅ Admin has been notified! You will receive your money shortly.');
 
-            // Send notification to Admin DM
             const ADMIN_ID = process.env.ADMIN_ID || process.env.ADMIN_DISCORD_ID;
             try {
                 const adminUser = await message.client.users.fetch(ADMIN_ID);
-                
+
                 const adminEmbed = new EmbedBuilder()
                     .setColor('#F39C12')
                     .setTitle('📤 New Withdrawal Request Alert!')
