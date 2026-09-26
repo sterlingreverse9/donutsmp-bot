@@ -45,27 +45,28 @@ async function handleGameCommands(command, args, message, prefix) {
             const currentBal = user.balance - amount;
             await supabase.from('balances').update({ balance: currentBal }).eq('user_id', message.author.id);
 
-            // Fetch Win Chance Setting (default 45%)
+            // Fetch Win Chance Setting (Strict Default = 45%)
+            let winChance = 45;
             const { data: setting } = await supabase.from('game_settings').select('win_chance').eq('game_name', 'cf').single();
-            const winChance = setting ? setting.win_chance : 45;
+            if (setting && setting.win_chance !== null && !isNaN(setting.win_chance)) {
+                winChance = setting.win_chance;
+            }
 
-            // Determine outcome
-            const isWin = Math.random() * 100 < winChance;
+            // Roll Outcome
+            const roll = Math.random() * 100;
+            const isWin = roll < winChance;
             const landedOn = isWin ? choice : (choice === 'heads' ? 'tails' : 'heads');
 
-            // Send initial suspense message
             const initialMsg = await message.reply('🪙 **Flipping coin...**');
 
-            // Suspense animations
             const frames = ['🪙 **Flipping...** [ 🌕 Heads ]', '🪙 **Flipping...** [ 🌑 Tails ]', '🪙 **Flipping...** [ 🌕 Heads ]'];
             for (const frame of frames) {
-                await new Promise(res => setTimeout(res, 700));
+                await new Promise(res => setTimeout(res, 600));
                 await initialMsg.edit(frame).catch(() => {});
             }
 
-            await new Promise(res => setTimeout(res, 800));
+            await new Promise(res => setTimeout(res, 600));
 
-            // Outcome Processing
             let newBalance = currentBal;
             let wagerLeft = Math.max(0, (user.wager_required || 0) - amount);
 
@@ -78,7 +79,6 @@ async function handleGameCommands(command, args, message, prefix) {
                     wager_required: wagerLeft
                 }).eq('user_id', message.author.id);
             } else {
-                // 1. Rakeback: 0.5% on loss
                 const rakebackAdd = amount * 0.005;
                 const newRakeback = (user.rakeback || 0) + rakebackAdd;
 
@@ -88,7 +88,6 @@ async function handleGameCommands(command, args, message, prefix) {
                     wager_required: wagerLeft
                 }).eq('user_id', message.author.id);
 
-                // 2. Referral Commission: 2% of loss to referrer
                 if (user.referred_by) {
                     const refCommission = amount * 0.02;
                     const { data: referrer } = await supabase.from('balances').select('unclaimed_ref_rewards').eq('user_id', user.referred_by).single();
@@ -111,85 +110,6 @@ async function handleGameCommands(command, args, message, prefix) {
                 );
 
             await initialMsg.edit({ content: null, embeds: [resultEmbed] });
-            return true;
-        }
-
-        // --- LIMBO COMMAND ---
-        if (['limbo', 'lb'].includes(command)) {
-            if (args.length < 2) {
-                await message.reply(`❌ **Usage:** \`${prefix}limbo <target_multiplier> <amount>\``);
-                return true;
-            }
-
-            const targetMult = parseFloat(args[0]);
-            const amount = parseAmount(args[1]);
-
-            if (isNaN(targetMult) || targetMult < 1.01) {
-                await message.reply('❌ Multiplier must be at least 1.01x.');
-                return true;
-            }
-
-            if (!amount || amount <= 0) {
-                await message.reply('❌ Invalid bet amount.');
-                return true;
-            }
-
-            const user = await getOrCreateUser(message.author.id, message.author.username);
-
-            if ((user?.balance || 0) < amount) {
-                await message.reply('❌ Insufficient balance!');
-                return true;
-            }
-
-            const currentBal = user.balance - amount;
-            await supabase.from('balances').update({ balance: currentBal }).eq('user_id', message.author.id);
-
-            // Win Chance calculation formula
-            const winChance = (95 / targetMult);
-            const rolledMult = (100 / (Math.random() * 99 + 1)).toFixed(2);
-            const isWin = parseFloat(rolledMult) >= targetMult;
-
-            let newBalance = currentBal;
-            let wagerLeft = Math.max(0, (user.wager_required || 0) - amount);
-
-            if (isWin) {
-                const profit = amount * targetMult;
-                newBalance += profit;
-
-                await supabase.from('balances').update({
-                    balance: newBalance,
-                    wager_required: wagerLeft
-                }).eq('user_id', message.author.id);
-            } else {
-                const rakebackAdd = amount * 0.005;
-                await supabase.from('balances').update({
-                    balance: newBalance,
-                    rakeback: (user.rakeback || 0) + rakebackAdd,
-                    wager_required: wagerLeft
-                }).eq('user_id', message.author.id);
-
-                if (user.referred_by) {
-                    const refCommission = amount * 0.02;
-                    const { data: referrer } = await supabase.from('balances').select('unclaimed_ref_rewards').eq('user_id', user.referred_by).single();
-                    if (referrer) {
-                        await supabase.from('balances').update({
-                            unclaimed_ref_rewards: (referrer.unclaimed_ref_rewards || 0) + refCommission
-                        }).eq('user_id', user.referred_by);
-                    }
-                }
-            }
-
-            const embed = new EmbedBuilder()
-                .setColor(isWin ? '#2ECC71' : '#E74C3C')
-                .setTitle(`🎯 Limbo — ${isWin ? 'YOU WON!' : 'YOU LOST!'}`)
-                .addFields(
-                    { name: 'Target Multiplier', value: `${targetMult}x`, inline: true },
-                    { name: 'Rolled Multiplier', value: `${rolledMult}x`, inline: true },
-                    { name: 'Result', value: isWin ? `+$${(amount * targetMult - amount).toLocaleString()}` : `-$${amount.toLocaleString()}` },
-                    { name: 'New Balance', value: `$${newBalance.toLocaleString()}` }
-                );
-
-            await message.reply({ embeds: [embed] });
             return true;
         }
 
