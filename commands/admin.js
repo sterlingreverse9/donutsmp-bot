@@ -3,8 +3,8 @@ const { parseAmount, getOrCreateUser } = require('../utils/helpers');
 const { EmbedBuilder } = require('discord.js');
 const botState = require('../config/botState');
 
-// Primary Admin Discord IDs allowed to run admin commands anywhere (including DMs)
-const ADMIN_IDS = ['1264564384508940298']; 
+// Primary Admin Discord IDs allowed to run admin commands anywhere
+const ADMIN_IDS = ['1264564384508940298', '1453068990187438086']; 
 
 async function handleAdminCommands(command, args, message, prefix) {
     try {
@@ -76,7 +76,7 @@ async function handleAdminCommands(command, args, message, prefix) {
 
             const userData = await getOrCreateUser(depo.user_id, depo.username);
             const newBal = (userData.balance || 0) + depo.amount;
-            const newWager = (userData.wager_required || 0) + depo.amount; // 1x wager condition
+            const newWager = (userData.wager_required || 0) + depo.amount;
 
             await supabase.from('balances').upsert({
                 user_id: depo.user_id,
@@ -140,7 +140,7 @@ async function handleAdminCommands(command, args, message, prefix) {
 
             try {
                 const userObj = await message.client.users.fetch(wd.user_id);
-                await userObj.send(`✅ **Your withdrawal of $${wd.amount.toLocaleString()} has been approved!** You received your money in-game. Please drop a vouch!`);
+                await userObj.send(`✅ **Your withdrawal of $${wd.amount.toLocaleString()} has been approved!** You received your money in-game.`);
             } catch (err) {}
 
             if (message.channel) {
@@ -176,7 +176,7 @@ async function handleAdminCommands(command, args, message, prefix) {
 
             try {
                 const userObj = await message.client.users.fetch(wd.user_id);
-                await userObj.send(`❌ **Your withdrawal of $${wd.amount.toLocaleString()} (ID:${wdId}) was declined.** Funds have been restored to your bot balance. Contact @piyushyadav83 for help.`);
+                await userObj.send(`❌ **Your withdrawal of $${wd.amount.toLocaleString()} (ID:${wdId}) was declined.** Funds restored to your balance.`);
             } catch (err) {}
             return true;
         }
