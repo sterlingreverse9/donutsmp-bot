@@ -10,7 +10,7 @@ async function handleGameCommands(command, args, message, prefix) {
         const username = message.author.username;
         const user = await getOrCreateUser(userId, username);
 
-        // --- LIMBO COMMAND (10% HOUSE EDGE & SMOOTH CURVE) ---
+        // --- LIMBO COMMAND ---
         if (['limbo', 'lb'].includes(command)) {
             if (args.length < 2) {
                 await message.reply(`❌ **Usage:** \`${prefix}limbo <amount> <multiplier>\` or \`${prefix}limbo <multiplier> <amount>\`\n*Example:* \`${prefix}limbo 100k 10x\``);
@@ -19,6 +19,7 @@ async function handleGameCommands(command, args, message, prefix) {
 
             let rawMultiplier, rawAmount;
 
+            // Detect flexible argument positioning
             if (args[0].toLowerCase().includes('x') || (!isNaN(parseFloat(args[0])) && parseFloat(args[0]) > 1 && !args[0].toLowerCase().includes('k') && !args[0].toLowerCase().includes('m'))) {
                 rawMultiplier = args[0];
                 rawAmount = args[1];
@@ -30,8 +31,9 @@ async function handleGameCommands(command, args, message, prefix) {
             const targetMultiplier = parseFloat(rawMultiplier.replace(/x/gi, ''));
             const betAmount = parseAmount(rawAmount);
 
-            if (isNaN(targetMultiplier) || targetMultiplier <= 1.01) {
-                await message.reply('❌ **Target multiplier must be greater than 1.01x.**');
+            // Bounds restriction check (1.01x to 100x)
+            if (isNaN(targetMultiplier) || targetMultiplier < 1.01 || targetMultiplier > 100) {
+                await message.reply('❌ **Target multiplier must be between 1.01x and 100x.**');
                 return true;
             }
 
@@ -45,26 +47,19 @@ async function handleGameCommands(command, args, message, prefix) {
                 return true;
             }
 
-            // --- REALISTIC LIMBO MATH (10% HOUSE EDGE) ---
-            // House Edge = 10% => Multiplier Scale = 0.90
-            const houseEdgeFactor = 0.90;
-            const trueWinProbability = houseEdgeFactor / targetMultiplier; // e.g. 10x target -> 0.09 (9% chance)
+            // --- PURE PARETO LIMBO CURVE MATH (10% HOUSE EDGE) ---
+            const houseEdgeFactor = 0.90; // 10% House Edge
+            const u = Math.random(); // Uniform distribution [0, 1)
 
-            const randomValue = Math.random(); // Range: 0.0 to 1.0
-            const won = randomValue < trueWinProbability;
+            // Inverse transform sampling formula for exponential probability decay curve
+            let rawRolled = houseEdgeFactor / (1 - u);
 
-            let finalRolled;
-            if (won) {
-                // Generates smooth winning multiplier above target
-                const maxWinMultiplier = targetMultiplier * 1.5;
-                finalRolled = (targetMultiplier + Math.random() * (maxWinMultiplier - targetMultiplier)).toFixed(2);
-            } else {
-                // Multiplier crashes below target curve
-                const rolledValue = Math.max(1.00, 1.00 / (1.00 - (randomValue * houseEdgeFactor)));
-                finalRolled = Math.min(rolledValue, targetMultiplier - 0.01).toFixed(2);
-            }
+            // Hard limits: min 1.00x, max capped at 100x target range
+            if (rawRolled < 1.00) rawRolled = 1.00;
+            if (rawRolled > 100) rawRolled = 100;
 
-            const targetRolled = parseFloat(finalRolled);
+            const targetRolled = parseFloat(rawRolled.toFixed(2));
+            const won = targetRolled >= targetMultiplier;
 
             let newBalance = user.balance;
             let rakebackAdded = 0;
@@ -85,7 +80,7 @@ async function handleGameCommands(command, args, message, prefix) {
                 wager_required: newWagerReq
             }).eq('user_id', userId);
 
-            // --- ANIMATED COUNT-UP (SMOOTH CUBIC CURVE) ---
+            // --- ANIMATED EXPONENTIAL COUNT-UP UI ---
             const initialEmbed = new EmbedBuilder()
                 .setColor('#F39C12')
                 .setTitle('🚀 Limbo — Launching...')
@@ -98,12 +93,11 @@ async function handleGameCommands(command, args, message, prefix) {
 
             const gameMsg = await message.reply({ embeds: [initialEmbed] });
 
-            // 5 Smooth count steps
-            const curveSteps = [0.15, 0.35, 0.60, 0.85, 1.0];
+            // Smooth cubic progression steps matching the exponential curve visual
+            const curveSteps = [0.20, 0.50, 0.80, 1.0];
             for (const progress of curveSteps) {
-                await sleep(400);
+                await sleep(350);
 
-                // Cubic ease-out curve calculation
                 const currentStepVal = (1.00 + (targetRolled - 1.00) * Math.pow(progress, 3)).toFixed(2);
 
                 const stepEmbed = new EmbedBuilder()
@@ -119,15 +113,15 @@ async function handleGameCommands(command, args, message, prefix) {
                 await gameMsg.edit({ embeds: [stepEmbed] }).catch(() => {});
             }
 
-            await sleep(300);
+            await sleep(250);
 
-            // Final Reveal
+            // Final Result Reveal
             const finalEmbed = new EmbedBuilder()
                 .setColor(won ? '#2ECC71' : '#E74C3C')
                 .setTitle(won ? '🚀 Limbo — YOU WON!' : '💥 Limbo — CRASHED!')
                 .addFields(
                     { name: 'Target', value: `${targetMultiplier}x`, inline: true },
-                    { name: 'Rolled', value: `${finalRolled}x`, inline: true },
+                    { name: 'Rolled', value: `${targetRolled.toFixed(2)}x`, inline: true },
                     { name: 'Bet Amount', value: `$${betAmount.toLocaleString()}`, inline: true },
                     { name: won ? 'Profit' : 'Loss', value: won ? `+$${(betAmount * (targetMultiplier - 1)).toLocaleString()}` : `-$${betAmount.toLocaleString()}`, inline: true },
                     { name: 'New Balance', value: `$${newBalance.toLocaleString()}`, inline: true }
@@ -166,7 +160,7 @@ async function handleGameCommands(command, args, message, prefix) {
 
             const shuffleStates = ['🌀 `TAILS`', '🌀 `HEADS`', '🌀 `TAILS`'];
             for (const stateText of shuffleStates) {
-                await sleep(400);
+                await sleep(350);
 
                 const shuffleEmbed = new EmbedBuilder()
                     .setColor('#F1C40F')
@@ -202,7 +196,7 @@ async function handleGameCommands(command, args, message, prefix) {
                 wager_required: newWagerReq
             }).eq('user_id', userId);
 
-            await sleep(400);
+            await sleep(350);
 
             const resultEmbed = new EmbedBuilder()
                 .setColor(isWin ? '#2ECC71' : '#E74C3C')
