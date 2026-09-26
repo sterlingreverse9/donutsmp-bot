@@ -1,12 +1,53 @@
 const supabase = require('../config/supabase');
-const { getOrCreateUser } = require('../utils/helpers');
+const { getOrCreateUser, parseAmount } = require('../utils/helpers');
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 
 async function handleGeneralCommands(command, args, message, prefix) {
     try {
-        if (['bal', 'balance', 'b', 'profile'].includes(command)) {
-            const user = await getOrCreateUser(message.author.id, message.author.username);
+        const user = await getOrCreateUser(message.author.id, message.author.username);
 
+        // --- HELP COMMAND ---
+        if (['help', 'commands', 'start'].includes(command)) {
+            const embed = new EmbedBuilder()
+                .setColor('#F1C40F')
+                .setTitle('📜 Donut Bet - Command List')
+                .setDescription('Available commands:')
+                .addFields(
+                    {
+                        name: '💰 Account',
+                        value: [
+                            `\`${prefix}bal\` - Check balance`,
+                            `\`${prefix}ref\` - Referral dashboard & claim`,
+                            `\`${prefix}link <MC_IGN>\` - Link MC username`,
+                            `\`${prefix}unlink\` - Remove linked IGN`,
+                            `\`${prefix}wager\` - Check wager requirement`,
+                            `\`${prefix}rakeback\` - Claim rakeback`,
+                            `\`${prefix}pay @user <amount>\` - Tip user`
+                        ].join('\n')
+                    },
+                    {
+                        name: '📥 Banking',
+                        value: [
+                            `\`${prefix}depo <amount>\` - Deposit request`,
+                            `\`${prefix}withdraw <amount>\` - Withdrawal request`
+                        ].join('\n')
+                    },
+                    {
+                        name: '🎲 Games',
+                        value: [
+                            `\`${prefix}limbo <amount> <multiplier>\` - Limbo game`,
+                            `\`${prefix}cf <amount> <heads/tails>\` - Coinflip game`
+                        ].join('\n')
+                    }
+                )
+                .setFooter({ text: 'Donut Bet Bot' });
+
+            await message.reply({ embeds: [embed] });
+            return true;
+        }
+
+        // --- BALANCE ---
+        if (['bal', 'balance', 'b', 'profile'].includes(command)) {
             const embed = new EmbedBuilder()
                 .setColor('#F1C40F')
                 .setTitle(`💰 ${message.author.username}'s Profile`)
@@ -21,15 +62,163 @@ async function handleGeneralCommands(command, args, message, prefix) {
             return true;
         }
 
+        // --- LINK & UNLINK ---
+        if (command === 'link') {
+            const mcUsername = args[0];
+            if (!mcUsername) {
+                await message.reply(`❌ **Usage:** \`${prefix}link <MC_IGN>\``);
+                return true;
+            }
+
+            await supabase
+                .from('balances')
+                .update({ mc_username: mcUsername })
+                .eq('user_id', message.author.id);
+
+            await message.reply(`✅ Successfully linked Minecraft IGN **\`${mcUsername}\`**!`);
+            return true;
+        }
+
+        if (command === 'unlink') {
+            if (!user?.mc_username) {
+                await message.reply('❌ You do not have any linked Minecraft account.');
+                return true;
+            }
+
+            await supabase
+                .from('balances')
+                .update({ mc_username: null })
+                .eq('user_id', message.author.id);
+
+            await message.reply('✅ Successfully unlinked your Minecraft account!');
+            return true;
+        }
+
+        // --- WAGER TRACKER ---
+        if (command === 'wager') {
+            const remainingWager = user?.wager_required || 0;
+            const embed = new EmbedBuilder()
+                .setColor(remainingWager > 0 ? '#E74C3C' : '#2ECC71')
+                .setTitle('🎯 Wager Requirement Status')
+                .setDescription(
+                    remainingWager > 0
+                        ? `You still need to wager **$${remainingWager.toLocaleString()}** before making a withdrawal.`
+                        : '🎉 You have fulfilled all wager requirements! You can freely withdraw.'
+                );
+
+            await message.reply({ embeds: [embed] });
+            return true;
+        }
+
+        // --- DEPOSIT FLOW ---
+        if (['depo', 'deposit'].includes(command)) {
+            if (!user?.mc_username) {
+                await message.reply(`❌ Please link your Minecraft account first using \`${prefix}link <MC_IGN>\`.`);
+                return true;
+            }
+
+            const rawAmount = args[0];
+            const amount = parseAmount(rawAmount);
+
+            if (!amount || amount <= 0) {
+                await message.reply(`❌ **Usage:** \`${prefix}depo <amount>\` (e.g. \`${prefix}depo 500k\`)`);
+                return true;
+            }
+
+            const embed = new EmbedBuilder()
+                .setColor('#3498DB')
+                .setTitle('📥 Deposit Request Initiated')
+                .setDescription(`To complete your deposit of **$${amount.toLocaleString()}**, send the money in-game to:`)
+                .addFields(
+                    { name: 'In-Game Pay Command', value: `\`\`\`/pay .fbfnch ${amount}\`\`\`` },
+                    { name: 'Linked IGN', value: `\`${user.mc_username}\`` }
+                )
+                .setFooter({ text: 'Click "I Paid" after sending the money in-game.' });
+
+            const row = new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`depo_paid_${amount}`)
+                    .setLabel('I Paid')
+                    .setStyle(ButtonStyle.Success)
+            );
+
+            await message.reply({ embeds: [embed], components: [row] });
+            return true;
+        }
+
+        // --- WITHDRAW FLOW ---
+        if (['withdraw', 'with'].includes(command)) {
+            if (!user?.mc_username) {
+                await message.reply(`❌ Please link your Minecraft account first using \`${prefix}link <MC_IGN>\`.`);
+                return true;
+            }
+
+            const rawAmount = args[0];
+            const amount = parseAmount(rawAmount);
+
+            if (!amount || amount <= 0) {
+                await message.reply(`❌ **Usage:** \`${prefix}withdraw <amount>\` (e.g. \`${prefix}withdraw 500k\`)`);
+                return true;
+            }
+
+            if ((user.balance || 0) < amount) {
+                await message.reply('❌ Insufficient balance for this withdrawal.');
+                return true;
+            }
+
+            if ((user.wager_required || 0) > 0) {
+                await message.reply(`❌ You must fulfill your remaining wager requirement of **$${user.wager_required.toLocaleString()}** before withdrawing.`);
+                return true;
+            }
+
+            // Deduct balance immediately pending payout
+            await supabase
+                .from('balances')
+                .update({ balance: user.balance - amount })
+                .eq('user_id', message.author.id);
+
+            await message.reply('✅ Admin has been notified! You will receive your money shortly.');
+
+            // Send notification to Admin DM
+            const ADMIN_ID = process.env.ADMIN_ID || process.env.ADMIN_DISCORD_ID;
+            try {
+                const adminUser = await message.client.users.fetch(ADMIN_ID);
+                
+                const adminEmbed = new EmbedBuilder()
+                    .setColor('#F39C12')
+                    .setTitle('📤 New Withdrawal Request Alert!')
+                    .addFields(
+                        { name: 'User', value: `${message.author.tag} (\`${message.author.id}\`)` },
+                        { name: 'MC IGN', value: `\`${user.mc_username}\`` },
+                        { name: 'Amount', value: `$${amount.toLocaleString()}` }
+                    )
+                    .setTimestamp();
+
+                const adminRow = new ActionRowBuilder().addComponents(
+                    new ButtonBuilder()
+                        .setCustomId(`admin_withdraw_approve_${message.author.id}_${amount}`)
+                        .setLabel('I Paid')
+                        .setStyle(ButtonStyle.Success),
+                    new ButtonBuilder()
+                        .setCustomId(`admin_withdraw_decline_${message.author.id}_${amount}`)
+                        .setLabel('Decline')
+                        .setStyle(ButtonStyle.Danger)
+                );
+
+                await adminUser.send({ embeds: [adminEmbed], components: [adminRow] });
+            } catch (err) {
+                console.error('Failed to send DM to Admin:', err);
+            }
+
+            return true;
+        }
+
+        // --- REFERRAL DASHBOARD ---
         if (['ref', 'refer', 'referral'].includes(command)) {
-            const user = await getOrCreateUser(message.author.id, message.author.username);
-            
-            const { data: refList, error } = await supabase
+            const { data: refList } = await supabase
                 .from('balances')
                 .select('*')
                 .eq('referred_by', message.author.id);
-
-            if (error) console.error('Supabase query error:', error);
 
             const totalRefs = refList ? refList.length : 0;
             const refNames = refList && refList.length > 0
@@ -49,7 +238,7 @@ async function handleGeneralCommands(command, args, message, prefix) {
                     { name: '💵 Unclaimed Rewards', value: `\`$${unclaimed.toLocaleString()}\``, inline: false },
                     { name: `Referred Users (${totalRefs})`, value: refNames, inline: false }
                 )
-                .setFooter({ text: 'Donut SMP Bot' });
+                .setFooter({ text: 'Donut Bet Bot' });
 
             const row = new ActionRowBuilder().addComponents(
                 new ButtonBuilder()
@@ -68,64 +257,10 @@ async function handleGeneralCommands(command, args, message, prefix) {
             return true;
         }
 
-        if (command === 'linkref') {
-            const user = await getOrCreateUser(message.author.id, message.author.username);
-            const referrerId = args[0];
-
-            if (!referrerId) {
-                await message.reply(`❌ **Usage:** \`${prefix}linkref <referrer_user_id>\``);
-                return true;
-            }
-            if (referrerId === message.author.id) {
-                await message.reply('❌ You cannot refer yourself!');
-                return true;
-            }
-            if (user?.referred_by) {
-                await message.reply('❌ You have already linked a referrer.');
-                return true;
-            }
-
-            const { data: referrer } = await supabase
-                .from('balances')
-                .select('*')
-                .eq('user_id', referrerId)
-                .single();
-
-            if (!referrer) {
-                await message.reply('❌ Invalid referrer User ID.');
-                return true;
-            }
-
-            await supabase
-                .from('balances')
-                .update({ referred_by: referrerId, deposit_count: 0 })
-                .eq('user_id', message.author.id);
-
-            await message.reply(`✅ Successfully linked **${referrer.username || referrer.user_id}** as your referrer!`);
-            return true;
-        }
-
-        if (command === 'link') {
-            const mcUsername = args[0];
-
-            if (!mcUsername) {
-                await message.reply(`❌ **Usage:** \`${prefix}link <MC_IGN>\``);
-                return true;
-            }
-
-            await supabase
-                .from('balances')
-                .update({ mc_username: mcUsername })
-                .eq('user_id', message.author.id);
-
-            await message.reply(`✅ Successfully linked Minecraft IGN **\`${mcUsername}\`**!`);
-            return true;
-        }
-
         return false;
     } catch (err) {
         console.error('❌ Error in handleGeneralCommands:', err);
-        await message.reply('❌ Error executing general command.');
+        await message.reply('❌ Error executing command.');
         return true;
     }
 }
