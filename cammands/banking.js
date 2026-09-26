@@ -1,42 +1,63 @@
 const supabase = require('../config/supabase');
-const { parseAmount, findTargetUser, getOrCreateUser } = require('../utils/helpers');
-const { EmbedBuilder } = require('discord.js');
+const { parseAmount, getOrCreateUser } = require('../utils/helpers');
 
 async function handleBankingCommands(command, args, message, prefix) {
-    const sender = await getOrCreateUser(message.author.id, message.author.username);
+    try {
+        if (['pay', 'tip', 'send'].includes(command)) {
+            const recipientMention = message.mentions.users.first();
+            const rawAmount = args[1] || args[0];
+            const amount = parseAmount(rawAmount);
 
-    if (['pay', 'transfer', 'tip'].includes(command)) {
-        const targetInput = args[0];
-        const amount = parseAmount(args[1]);
+            if (!recipientMention || !amount || amount <= 0) {
+                await message.reply(`❌ **Usage:** \`${prefix}pay <@user> <amount>\``);
+                return true;
+            }
 
-        if (!targetInput || !amount || amount <= 0) {
-            await message.reply(`❌ **Usage:** \`${prefix}pay <@user/username/userID> <amount>\``);
+            if (recipientMention.id === message.author.id) {
+                await message.reply('❌ You cannot send money to yourself!');
+                return true;
+            }
+
+            const sender = await getOrCreateUser(message.author.id, message.author.username);
+
+            if (sender.balance < amount) {
+                await message.reply(`❌ Insufficient funds! Balance: **$${sender.balance.toLocaleString()}**`);
+                return true;
+            }
+
+            const recipient = await getOrCreateUser(recipientMention.id, recipientMention.username);
+
+            await supabase.from('balances').update({ balance: sender.balance - amount }).eq('user_id', sender.user_id);
+            await supabase.from('balances').update({ balance: recipient.balance + amount }).eq('user_id', recipient.user_id);
+
+            await message.reply(`💸 Successfully paid **$${amount.toLocaleString()}** to **${recipientMention.username}**!`);
             return true;
         }
 
-        if (sender.balance < amount) {
-            await message.reply(`❌ Insufficient balance! Balance: **$${sender.balance.toLocaleString()}**`);
+        if (['claimrakeback', 'rakeback'].includes(command)) {
+            const user = await getOrCreateUser(message.author.id, message.author.username);
+            const claimAmount = user.rakeback || 0;
+
+            if (claimAmount <= 0) {
+                await message.reply('❌ You have no rakeback to claim.');
+                return true;
+            }
+
+            await supabase.from('balances').update({
+                balance: user.balance + claimAmount,
+                rakeback: 0
+            }).eq('user_id', user.user_id);
+
+            await message.reply(`🎁 Successfully claimed **$${claimAmount.toLocaleString()}** in rakeback!`);
             return true;
         }
 
-        const targetUser = await findTargetUser(targetInput, message.mentions.users.first());
-        if (!targetUser) {
-            await message.reply(`❌ User \`${targetInput}\` not found.`);
-            return true;
-        }
-        if (targetUser.user_id === sender.user_id) {
-            await message.reply("❌ You can't pay yourself!");
-            return true;
-        }
-
-        await supabase.from('balances').update({ balance: sender.balance - amount }).eq('user_id', sender.user_id);
-        await supabase.from('balances').update({ balance: (targetUser.balance || 0) + amount }).eq('user_id', targetUser.user_id);
-
-        await message.reply(`💸 Sent **$${amount.toLocaleString()}** to **${targetUser.username || targetUser.user_id}**!`);
+        return false;
+    } catch (err) {
+        console.error('❌ Error in handleBankingCommands:', err);
+        await message.reply('❌ Error processing banking command.');
         return true;
     }
-
-    return false;
 }
 
 module.exports = { handleBankingCommands };
