@@ -3,17 +3,20 @@ const { parseAmount, getOrCreateUser } = require('../utils/helpers');
 const { EmbedBuilder } = require('discord.js');
 const botState = require('../config/botState');
 
-// Set your Admin Discord ID here for strict permission checks
-const ADMIN_ID = '1453068990187438086';
+// Primary Admin Discord IDs allowed to run admin commands anywhere (including DMs)
+const ADMIN_IDS = ['1453068990187438086']; 
 
 async function handleAdminCommands(command, args, message, prefix) {
     try {
-        const isOwner = message.author.id === ADMIN_ID;
-        const isAdmin = isOwner || message.member?.permissions.has('Administrator');
+        const isOwner = ADMIN_IDS.includes(message.author.id);
+        const isAdmin = isOwner || (message.member && message.member.permissions.has('Administrator'));
 
         // --- STARTBOT COMMAND ---
         if (['startbot'].includes(command)) {
-            if (!isAdmin) return true;
+            if (!isAdmin) {
+                await message.reply('❌ You do not have permission to use this command.');
+                return true;
+            }
             botState.setBotStatus(true);
             await supabase.from('game_settings').upsert({ game_name: 'bot_status', is_active: true }, { onConflict: 'game_name' });
             await message.reply('🟢 **Bot has been turned ON.** All commands are now accessible.');
@@ -22,7 +25,10 @@ async function handleAdminCommands(command, args, message, prefix) {
 
         // --- STOPBOT COMMAND ---
         if (['stopbot'].includes(command)) {
-            if (!isAdmin) return true;
+            if (!isAdmin) {
+                await message.reply('❌ You do not have permission to use this command.');
+                return true;
+            }
             botState.setBotStatus(false);
             await supabase.from('game_settings').upsert({ game_name: 'bot_status', is_active: false }, { onConflict: 'game_name' });
             await message.reply('🔴 **Bot has been turned OFF.** Commands are disabled for regular users.');
@@ -80,16 +86,12 @@ async function handleAdminCommands(command, args, message, prefix) {
             }, { onConflict: 'user_id' });
 
             await supabase.from('pending_deposits').update({ status: 'approved' }).eq('id', depoId);
-
             await message.reply(`✅ Approved Deposit \`${depoId}\` for $${depo.amount.toLocaleString()}!`);
 
-            // DM Depositer
             try {
                 const userObj = await message.client.users.fetch(depo.user_id);
                 await userObj.send(`✅ **Your deposit of $${depo.amount.toLocaleString()} (ID:${depoId}) has been approved!** You can now play.`);
-            } catch (err) {
-                console.error('Could not DM user:', err);
-            }
+            } catch (err) {}
             return true;
         }
 
@@ -114,9 +116,7 @@ async function handleAdminCommands(command, args, message, prefix) {
             try {
                 const userObj = await message.client.users.fetch(depo.user_id);
                 await userObj.send(`❌ **Your deposit (ID: ${depoId}) was declined.** Please contact admin @piyushyadav83 for assistance.`);
-            } catch (err) {
-                console.error('Could not DM user:', err);
-            }
+            } catch (err) {}
             return true;
         }
 
@@ -143,7 +143,6 @@ async function handleAdminCommands(command, args, message, prefix) {
                 await userObj.send(`✅ **Your withdrawal of $${wd.amount.toLocaleString()} has been approved!** You received your money in-game. Please drop a vouch!`);
             } catch (err) {}
 
-            // Public Announcement
             if (message.channel) {
                 await message.channel.send(`🎉 **Withdrawal Approved!** <@${wd.user_id}> successfully withdrew **$${wd.amount.toLocaleString()}**!`);
             }
@@ -165,7 +164,6 @@ async function handleAdminCommands(command, args, message, prefix) {
                 return true;
             }
 
-            // Refund balance on decline
             const userData = await getOrCreateUser(wd.user_id, wd.username);
             await supabase.from('balances').upsert({
                 user_id: wd.user_id,
@@ -211,7 +209,7 @@ async function handleAdminCommands(command, args, message, prefix) {
                 wager_required: newWager
             }, { onConflict: 'user_id' });
 
-            await message.reply(`✅ Added **$${amount.toLocaleString()}** to ${targetUser.username}'s balance! (Wager Req: +$${amount.toLocaleString()})`);
+            await message.reply(`✅ Added **$${amount.toLocaleString()}** to ${targetUser.username}'s balance!`);
             return true;
         }
 
