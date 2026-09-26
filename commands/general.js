@@ -10,13 +10,17 @@ async function handleGeneralCommands(command, args, message, prefix) {
         if (['start', 'help', 'commands'].includes(command)) {
             let bonusText = '';
 
-            if (user && user.claimed_starter_bonus !== true) {
-                await supabase.from('balances').update({
-                    balance: (user?.balance || 0) + 1000000,
-                    claimed_starter_bonus: true
-                }).eq('user_id', message.author.id);
+            if (!user || user.claimed_starter_bonus !== true) {
+                const newBalance = (user?.balance || 0) + 1000000;
 
-                bonusText = '\n\n🎉 **First-Time Bonus Claimed!** Added **$1,000,000** starter bonus to your account!';
+                await supabase.from('balances').upsert({
+                    user_id: message.author.id,
+                    username: message.author.username,
+                    balance: newBalance,
+                    claimed_starter_bonus: true
+                });
+
+                bonusText = '\n\n🎉 **Starter Bonus Claimed!** Added **$1,000,000** to your balance!';
             }
 
             const embed = new EmbedBuilder()
