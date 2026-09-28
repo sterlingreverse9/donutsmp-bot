@@ -129,14 +129,14 @@ async def play_round(bot, user, bet, side, edit, owner_view=None):
     except discord.HTTPException:
         pass  # a failed edit must never cost the player their payout
 
-    if win:
-        for _ in range(3):
-            try:
-                new_bal = await db.add_balance(user.id, bet * 2)
-                break
-            except Exception:
-                log.exception("payout failed, retrying")
-                await asyncio.sleep(1)
+    detail = f"{NAME[side]} -> {NAME[result]}"
+    for _ in range(3):
+        try:
+            new_bal = await db.settle_cf(user.id, bet, win, detail)
+            break
+        except Exception:
+            log.exception("settle failed, retrying")
+            await asyncio.sleep(1)
 
     view = AgainView(bot, user, bet, side)
     try:
