@@ -7,6 +7,10 @@ ADMIN_ID = int(os.environ["ADMIN_DISCORD_ID"])
 PORT = int(os.getenv("PORT", "10000"))  # Render sets this automatically
 
 BOT_NAME = "Donut Bet"
+
+# optional: channel where completed withdrawals are announced (falls back to the channel it was requested in)
+ANNOUNCE_CHANNEL_ID = int(os.getenv("ANNOUNCE_CHANNEL_ID", "0") or 0)
+MAX_REQUEST = 10**15
 PREFIXES = ["$", ".", "/", "!"]
 CURRENCY = "$"
 START_BONUS = 1_000_000
@@ -24,3 +28,9 @@ COLOR_DARK = 0x2B2D31
 
 def fmt(amount: int) -> str:
     return f"{CURRENCY}{int(amount):,}"
+
+
+SIM_WARNING = (
+    "🌹"
+)
+SIM_FOOTER = f"{BOT_NAME} 🍩 · Play more , Win more"
