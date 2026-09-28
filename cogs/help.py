@@ -25,12 +25,14 @@ class Help(commands.Cog):
         e.add_field(
             name="🎰 Games",
             value="`/cf` · `/coin` · `/flip` · `/coinflip`\n"
-            "Buttons, or quick: `/cf 10k heads`, `!cf tails 1m`",
+            "Buttons, or quick: `/cf 10k heads`, `!cf tails 1m`\n"
+            "🚀 `/limbo` beat a target multiplier: `/limbo 10k 2x`",
             inline=False,
         )
         e.add_field(
             name="💸 Money",
-            value="`/tip <user> <amt>` · `/pay <amt> <user>` send money\n"
+            value="`/deposit <amt>` · `/withdraw <amt>`\n"
+            "`/tip <user> <amt>` · `/pay <amt> <user>` send money\n"
             "`/rakeback` claim 0.5% of your losses\n"
             "`/wager` see your remaining wager\n"
             "`/history` your recent activity",
