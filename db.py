@@ -241,3 +241,33 @@ async def create_withdraw(discord_id: int, amount: int, ign: str, channel_id: in
 async def reject_withdraw(code: str, reason: str):
     """Refunds the player. Returns {discord_id, amount, balance} or None if already handled."""
     return await _rpc("reject_withdraw", {"p_code": code, "p_reason": reason})
+
+
+# ───── limbo ─────
+
+
+async def settle_game(discord_id: int, bet: int, payout: int, kind: str, detail: str) -> int:
+    """payout > 0 credits the win; payout == 0 records a loss (for rakeback)."""
+    return await _rpc(
+        "settle_game",
+        {"p_id": discord_id, "p_bet": bet, "p_payout": payout, "p_kind": kind, "p_detail": detail},
+    )
+
+
+async def get_limbo_edge() -> float:
+    def q():
+        r = _client.table("bot_state").select("limbo_house_edge").eq("id", 1).execute()
+        return float(r.data[0]["limbo_house_edge"]) if r.data else 10.0
+
+    try:
+        return await asyncio.to_thread(q)
+    except Exception:
+        log.warning("limbo_house_edge missing, using 10%. Run migration_4.sql")
+        return 10.0
+
+
+async def set_limbo_edge(value: float) -> None:
+    def q():
+        _client.table("bot_state").update({"limbo_house_edge": value}).eq("id", 1).execute()
+
+    await asyncio.to_thread(q)
