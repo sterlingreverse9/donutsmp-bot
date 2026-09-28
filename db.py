@@ -271,3 +271,171 @@ async def set_limbo_edge(value: float) -> None:
         _client.table("bot_state").update({"limbo_house_edge": value}).eq("id", 1).execute()
 
     await asyncio.to_thread(q)
+
+
+# ───── mines ─────
+
+
+async def get_mines_edge() -> float:
+    def q():
+        r = _client.table("bot_state").select("mines_house_edge").eq("id", 1).execute()
+        return float(r.data[0]["mines_house_edge"]) if r.data else 10.0
+
+    try:
+        return await asyncio.to_thread(q)
+    except Exception:
+        log.warning("mines_house_edge missing, using 10%. Run migration_5.sql")
+        return 10.0
+
+
+async def set_mines_edge(value: float) -> None:
+    def q():
+        _client.table("bot_state").update({"mines_house_edge": value}).eq("id", 1).execute()
+
+    await asyncio.to_thread(q)
+
+
+# ───── referrals ─────
+
+
+async def get_ref_code(discord_id: int, guild_id: int):
+    def q():
+        r = (
+            _client.table("referral_codes")
+            .select("*")
+            .eq("discord_id", discord_id)
+            .eq("guild_id", guild_id)
+            .limit(1)
+            .execute()
+        )
+        return r.data[0] if r.data else None
+
+    return await asyncio.to_thread(q)
+
+
+async def save_ref_code(discord_id: int, guild_id: int, code: str, uses: int):
+    def q():
+        _client.table("referral_codes").upsert(
+            {"discord_id": discord_id, "guild_id": guild_id, "code": code, "uses": uses},
+            on_conflict="discord_id,guild_id",
+        ).execute()
+
+    await asyncio.to_thread(q)
+
+
+async def ref_codes_for_guild(guild_id: int):
+    def q():
+        return _client.table("referral_codes").select("*").eq("guild_id", guild_id).execute().data
+
+    return await asyncio.to_thread(q)
+
+
+async def update_ref_uses(code: str, uses: int):
+    def q():
+        _client.table("referral_codes").update({"uses": uses}).eq("code", code).execute()
+
+    await asyncio.to_thread(q)
+
+
+async def register_referral(referred_id: int, referrer_id: int, name: str, guild_id: int) -> bool:
+    """True if this is a brand-new referral (a player can only be referred once)."""
+    data = await _rpc(
+        "register_referral",
+        {"p_referred": referred_id, "p_referrer": referrer_id, "p_name": name, "p_guild": guild_id},
+    )
+    return bool(data)
+
+
+async def get_referral(referred_id: int):
+    def q():
+        r = _client.table("referrals").select("*").eq("referred_id", referred_id).limit(1).execute()
+        return r.data[0] if r.data else None
+
+    return await asyncio.to_thread(q)
+
+
+async def referrals_of(referrer_id: int):
+    def q():
+        return (
+            _client.table("referrals")
+            .select("*")
+            .eq("referrer_id", referrer_id)
+            .order("joined_at", desc=True)
+            .execute()
+            .data
+        )
+
+    return await asyncio.to_thread(q)
+
+
+async def referrals_due(cutoff_iso: str):
+    """Pending referrals that joined before the cutoff (i.e. 24h have passed)."""
+
+    def q():
+        return (
+            _client.table("referrals")
+            .select("*")
+            .eq("status", "pending")
+            .lte("joined_at", cutoff_iso)
+            .execute()
+            .data
+        )
+
+    return await asyncio.to_thread(q)
+
+
+async def set_referral_status(referred_id: int, from_status: str, to_status: str):
+    """Atomic conditional update. Returns the row, or None if it wasn't in from_status."""
+
+    def q():
+        values = {"status": to_status}
+        if to_status == "qualified":
+            values["qualified_at"] = datetime.now(timezone.utc).isoformat()
+        r = (
+            _client.table("referrals")
+            .update(values)
+            .eq("referred_id", referred_id)
+            .eq("status", from_status)
+            .execute()
+        )
+        return r.data[0] if r.data else None
+
+    return await asyncio.to_thread(q)
+
+
+async def referrals_awaiting_wager_notice():
+    """Referrals that made their first deposit and whose wager-complete DM hasn't been sent yet."""
+
+    def q():
+        rows = (
+            _client.table("referrals")
+            .select("*")
+            .eq("first_done", True)
+            .eq("wager_notified", False)
+            .in_("status", ["pending", "qualified"])
+            .execute()
+            .data
+        )
+        if not rows:
+            return []
+        ids = [r["referred_id"] for r in rows]
+        users = (
+            _client.table("users").select("discord_id,wager_left").in_("discord_id", ids).execute().data
+        )
+        left = {u["discord_id"]: u["wager_left"] for u in users}
+        return [r for r in rows if left.get(r["referred_id"], 1) == 0]
+
+    return await asyncio.to_thread(q)
+
+
+async def mark_wager_notified(referred_id: int):
+    def q():
+        _client.table("referrals").update({"wager_notified": True}).eq("referred_id", referred_id).execute()
+
+    await asyncio.to_thread(q)
+
+
+async def claim_referral(referrer_id: int):
+    """Amount claimed (0 = nothing claimable), or None if the player hasn't joined."""
+    result = await _rpc("claim_referral", {"p_id": referrer_id})
+    return None if result is None or result < 0 else result
