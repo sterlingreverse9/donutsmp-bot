@@ -28,6 +28,7 @@ class Economy(commands.Cog):
             )
             e.add_field(name="💰 Balance", value=config.fmt(user["balance"]), inline=True)
             e.add_field(name="🎲 Games", value="🪙 Coin Flip · `/cf`", inline=True)
+            e.add_field(name="❓ Need help?", value="Use `/help` anytime.", inline=False)
         else:
             e = embeds.info(
                 "🍩 You're already in!",
