@@ -4,7 +4,7 @@ import discord
 
 import config
 import db
-from utils import embeds
+from utils import embeds, referral
 
 IMG_EXT = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".heic")
 
@@ -24,7 +24,7 @@ def who(user) -> str:
 def deposit_admin_embed(user, ign, amount, code):
     e = embeds.gold(
         "📥 Deposit Request",
-        "Simulated deposit. Accept to credit their balance.",
+        "Simulated deposit. Accept to credit their fake balance.",
     )
     e.add_field(name="👤 Player", value=who(user), inline=False)
     e.add_field(name="🎮 IGN", value=f"`{ign}`", inline=True)
@@ -36,7 +36,7 @@ def deposit_admin_embed(user, ign, amount, code):
 def withdraw_admin_embed(user, ign, amount, code, balance_after):
     e = embeds.gold(
         "📤 Withdrawal Request",
-        " withdrawal aa gya oye, jldi pay kr",
+        "Simulated withdrawal. Nothing is actually paid in game.",
     )
     e.add_field(name="👤 Player", value=who(user), inline=False)
     e.add_field(name="🎮 IGN", value=f"`{ign}`", inline=True)
@@ -91,8 +91,8 @@ async def announce_withdrawal(bot, req):
             config.COLOR_GREEN,
         )
         e.add_field(
-            name="🌹",
-            value="paid in game. go vouch me",
+            name="⚠️ Simulation",
+            value="Fake balance. Nothing was paid in game.",
             inline=False,
         )
         await channel.send(embed=embeds.sim(e))
@@ -136,6 +136,16 @@ async def do_accept(interaction, code):
     if not await dm_user(interaction.client, data["discord_id"], embeds.sim(e)):
         await _dm_failed(interaction)
 
+    ref = data.get("ref")
+    if ref:  # tell the referrer about their friend's deposit
+        await referral.dm(
+            interaction.client,
+            ref["referrer_id"],
+            referral.deposit_embed(
+                ref["name"], data["amount"], ref["reward"], ref["qualified"], ref["first"]
+            ),
+        )
+
 
 async def do_paid(interaction, code):
     await interaction.response.defer()
@@ -157,8 +167,8 @@ async def do_paid(interaction, code):
     e.add_field(name="🆔 Withdraw ID", value=f"`{code}`", inline=True)
     e.add_field(name="🎮 IGN", value=f"`{req['mc_ign']}`", inline=True)
     e.add_field(
-        name="🌹",
-        value="Your withdrawal amount is paid in game, pls check and drop a vouch in server",
+        name="⚠️ Simulation",
+        value="Nothing was actually sent in game. Balances here are fake.",
         inline=False,
     )
     if not await dm_user(interaction.client, req["discord_id"], embeds.sim(e)):
