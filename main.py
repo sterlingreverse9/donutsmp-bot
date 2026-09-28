@@ -18,10 +18,12 @@ EXTENSIONS = (
     "cogs.help",
     "cogs.coinflip",
     "cogs.limbo",
+    "cogs.mines",
     "cogs.deposit",
     "cogs.withdraw",
     "cogs.transfers",
     "cogs.rewards",
+    "cogs.referral",
     "cogs.admin",
 )
 
@@ -30,6 +32,7 @@ class DonutBetBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
         intents.message_content = True
+        intents.members = True  # needed to track referral joins/leaves
         super().__init__(
             command_prefix=commands.when_mentioned_or(*config.PREFIXES),
             intents=intents,
