@@ -7,6 +7,7 @@ import checks
 import config
 import db
 from utils import embeds
+from utils.review import ReviewButton
 from webserver import start_web
 
 logging.basicConfig(level=logging.INFO)
@@ -16,6 +17,8 @@ EXTENSIONS = (
     "cogs.profile",
     "cogs.help",
     "cogs.coinflip",
+    "cogs.deposit",
+    "cogs.withdraw",
     "cogs.transfers",
     "cogs.rewards",
     "cogs.admin",
@@ -38,6 +41,7 @@ class DonutBetBot(commands.Bot):
 
     async def setup_hook(self):
         await start_web()
+        self.add_dynamic_items(ReviewButton)  # admin buttons keep working after restarts
         self.bot_enabled = await db.is_running()
         self.cf_win_chance = await db.get_cf_chance()
         for ext in EXTENSIONS:
@@ -54,6 +58,7 @@ class DonutBetBot(commands.Bot):
 
     async def on_ready(self):
         logging.info("Logged in as %s", self.user)
+        logging.info("Commands loaded: %s", sorted(c.name for c in self.commands))
 
     async def on_command_error(self, ctx, error):
         if isinstance(error, commands.CommandNotFound):
