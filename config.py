@@ -10,6 +10,8 @@ BOT_NAME = "Donut Bet"
 PREFIXES = ["$", ".", "/", "!"]
 CURRENCY = "$"
 START_BONUS = 1_000_000
+RAKEBACK_RATE = 0.005  # 0.5% of losses
+HISTORY_LIMIT = 15
 DEFAULT_CF_WIN = 45.0  # % chance a player wins a coinflip (change with !wincf in bot DM)
 
 # embed palette
