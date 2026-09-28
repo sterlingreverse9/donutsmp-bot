@@ -11,7 +11,15 @@ from webserver import start_web
 
 logging.basicConfig(level=logging.INFO)
 
-EXTENSIONS = ("cogs.economy", "cogs.admin", "cogs.coinflip")
+EXTENSIONS = (
+    "cogs.economy",
+    "cogs.profile",
+    "cogs.help",
+    "cogs.coinflip",
+    "cogs.transfers",
+    "cogs.rewards",
+    "cogs.admin",
+)
 
 
 class DonutBetBot(commands.Bot):
@@ -62,6 +70,19 @@ class DonutBetBot(commands.Bot):
         if isinstance(error, checks.NotAdmin):
             await ctx.send(
                 embed=embeds.error("Admins only", "This command is for the administrator."),
+                ephemeral=True,
+            )
+            return
+        if isinstance(
+            error,
+            (commands.MissingRequiredArgument, commands.BadArgument, commands.UserNotFound),
+        ):
+            usage = f"/{ctx.command.qualified_name} {ctx.command.signature}".strip()
+            await ctx.send(
+                embed=embeds.error(
+                    "Check your command",
+                    f"Usage: `{usage}`\nTip: mention players like @name. See `/help`.",
+                ),
                 ephemeral=True,
             )
             return
