@@ -17,6 +17,7 @@ EXTENSIONS = (
     "cogs.profile",
     "cogs.help",
     "cogs.coinflip",
+    "cogs.limbo",
     "cogs.deposit",
     "cogs.withdraw",
     "cogs.transfers",
