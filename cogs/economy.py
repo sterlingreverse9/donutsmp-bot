@@ -1,18 +1,8 @@
-import discord
 from discord.ext import commands
 
 import config
 import db
-
-
-def balance_embed(user, balance: int) -> discord.Embed:
-    e = discord.Embed(
-        title="💰 Your Wallet",
-        description=f"**{config.fmt(balance)}**",
-        color=config.COLOR_GOLD,
-    )
-    e.set_author(name=user.display_name, icon_url=user.display_avatar.url)
-    return e
+from utils import embeds
 
 
 class Economy(commands.Cog):
@@ -28,33 +18,45 @@ class Economy(commands.Cog):
         user = await db.get_user(ctx.author.id)
 
         if claimed:
-            e = discord.Embed(
-                title=f"🎰 Welcome to {config.BOT_NAME}!",
-                description=(
-                    f"{ctx.author.mention}, you've received "
-                    f"**{config.fmt(config.START_BONUS)}** to get you started.\n\n"
-                    "Use `/bal` to check your wallet. Good luck at the tables!"
-                ),
-                color=config.COLOR_GREEN,
+            e = embeds.make(
+                f"🍩 Welcome to {config.BOT_NAME}!",
+                f"## 🎰 You're in, {ctx.author.display_name}!\n"
+                f"A **{config.fmt(config.START_BONUS)}** welcome bonus just landed in your wallet.",
+                config.COLOR_GREEN,
+                ctx.author,
+                thumbnail=True,
             )
+            e.add_field(name="💰 Balance", value=config.fmt(user["balance"]), inline=True)
+            e.add_field(name="🎲 Games", value="🪙 Coin Flip · `/cf`", inline=True)
         else:
-            e = discord.Embed(
-                title="Already in the casino",
-                description=(
-                    "You've already claimed your welcome bonus.\n"
-                    f"Current balance: **{config.fmt(user['balance'])}**"
-                ),
-                color=config.COLOR_RED,
+            e = embeds.info(
+                "🍩 You're already in!",
+                "Your welcome bonus has already been claimed.",
+                ctx.author,
             )
+            e.add_field(name="💰 Balance", value=config.fmt(user["balance"]), inline=True)
         await ctx.send(embed=e)
 
     async def _show_balance(self, ctx):
         await ctx.defer()
         user = await db.get_user(ctx.author.id)
         if not user or not user["started"]:
-            await ctx.send("You haven't joined yet. Use `/start` to claim your bonus!")
+            await ctx.send(
+                embed=embeds.info(
+                    "🍩 Not in yet",
+                    "Use `/start` to join the casino and claim your bonus!",
+                    ctx.author,
+                )
+            )
             return
-        await ctx.send(embed=balance_embed(ctx.author, user["balance"]))
+        e = embeds.gold(
+            "💼 Wallet",
+            f"## 💰 {config.fmt(user['balance'])}",
+            ctx.author,
+            thumbnail=True,
+        )
+        e.add_field(name="🎲 Ready to play?", value="`/cf` to flip a coin", inline=False)
+        await ctx.send(embed=e)
 
     @commands.hybrid_command(name="bal", description="Check your balance")
     async def bal(self, ctx):
