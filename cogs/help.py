@@ -26,7 +26,8 @@ class Help(commands.Cog):
             name="🎰 Games",
             value="`/cf` · `/coin` · `/flip` · `/coinflip`\n"
             "Buttons, or quick: `/cf 10k heads`, `!cf tails 1m`\n"
-            "🚀 `/limbo` beat a target multiplier: `/limbo 10k 2x`",
+            "🚀 `/limbo` beat a target multiplier: `/limbo 10k 2x`\n"
+            "💣 `/mines <bet> <mines>` · `/mine` · `/bomb`",
             inline=False,
         )
         e.add_field(
@@ -34,6 +35,7 @@ class Help(commands.Cog):
             value="`/deposit <amt>` · `/withdraw <amt>`\n"
             "`/tip <user> <amt>` · `/pay <amt> <user>` send money\n"
             "`/rakeback` claim 0.5% of your losses\n"
+            "`/ref` · `/refer` your referral link & rewards\n"
             "`/wager` see your remaining wager\n"
             "`/history` your recent activity",
             inline=False,
