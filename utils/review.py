@@ -24,7 +24,7 @@ def who(user) -> str:
 def deposit_admin_embed(user, ign, amount, code):
     e = embeds.gold(
         "📥 Deposit Request",
-        "Simulated deposit. Accept to credit their fake balance.",
+        "Simulated deposit. Accept to credit their balance.",
     )
     e.add_field(name="👤 Player", value=who(user), inline=False)
     e.add_field(name="🎮 IGN", value=f"`{ign}`", inline=True)
@@ -36,7 +36,7 @@ def deposit_admin_embed(user, ign, amount, code):
 def withdraw_admin_embed(user, ign, amount, code, balance_after):
     e = embeds.gold(
         "📤 Withdrawal Request",
-        "Simulated withdrawal. Nothing is actually paid in game.",
+        " withdrawal aa gya oye, jldi pay kr",
     )
     e.add_field(name="👤 Player", value=who(user), inline=False)
     e.add_field(name="🎮 IGN", value=f"`{ign}`", inline=True)
@@ -91,8 +91,8 @@ async def announce_withdrawal(bot, req):
             config.COLOR_GREEN,
         )
         e.add_field(
-            name="⚠️ Simulation",
-            value="Fake balance. Nothing was paid in game.",
+            name="🌹",
+            value="paid in game. go vouch me",
             inline=False,
         )
         await channel.send(embed=embeds.sim(e))
@@ -157,8 +157,8 @@ async def do_paid(interaction, code):
     e.add_field(name="🆔 Withdraw ID", value=f"`{code}`", inline=True)
     e.add_field(name="🎮 IGN", value=f"`{req['mc_ign']}`", inline=True)
     e.add_field(
-        name="⚠️ Simulation",
-        value="Nothing was actually sent in game. Balances here are fake.",
+        name="🌹",
+        value="Your withdrawal amount is paid in game, pls check and drop a vouch in server",
         inline=False,
     )
     if not await dm_user(interaction.client, req["discord_id"], embeds.sim(e)):
