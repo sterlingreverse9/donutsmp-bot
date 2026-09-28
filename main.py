@@ -92,10 +92,11 @@ class DonutBetBot(commands.Bot):
             )
             return
         logging.exception("Command error", exc_info=error)
-        await ctx.send(
-            embed=embeds.error("Something went wrong", "Please try again in a moment."),
-            ephemeral=True,
-        )
+        text = "Please try again in a moment."
+        if ctx.author.id == config.ADMIN_ID:  # only you see the technical reason
+            cause = getattr(error, "original", error)
+            text += f"\n```{type(cause).__name__}: {str(cause)[:500]}```"
+        await ctx.send(embed=embeds.error("Something went wrong", text), ephemeral=True)
 
 
 if __name__ == "__main__":
