@@ -19,6 +19,12 @@ KINDS = {
     "tip_received": ("📥", "Tip received"),
     "admin_add": ("🛠️", "Balance added"),
     "admin_deduct": ("🛠️", "Balance removed"),
+    "limbo": ("🚀", "Limbo"),
+    "mines": ("💣", "Mines"),
+    "referral": ("🤝", "Referral"),
+    "deposit": ("📥", "Deposit"),
+    "withdraw": ("📤", "Withdrawal"),
+    "withdraw_refund": ("↩️", "Withdrawal refunded"),
 }
 
 
