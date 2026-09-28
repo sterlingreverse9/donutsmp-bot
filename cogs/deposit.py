@@ -27,7 +27,7 @@ def deposit_embed(user, ign, amount, code):
     e.add_field(
         name="📋 Instructions",
         value=(
-            "**1.** pay tge amount to .fbfnch [ /pay .fbfnch amt ]\n"
+            "**1.** Pay the amount to .fbfnch [ /pay .fbfnch amt ]\n"
             "**2.** Take the screenshot of payment. If screenshot is cropped or edited, deposit will be declined and money will not be refunded.\n"
             "**3.** Come back here and press **✅ I Paid**.\n"
             "**4.** Send the screenshot in this chat."
