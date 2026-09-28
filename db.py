@@ -1,5 +1,7 @@
 import asyncio
 import logging
+import secrets
+from datetime import datetime, timezone
 
 from supabase import create_client
 
@@ -153,3 +155,89 @@ async def set_cf_chance(value: float) -> None:
         _client.table("bot_state").update({"cf_win_chance": value}).eq("id", 1).execute()
 
     await asyncio.to_thread(q)
+
+
+# ───── deposit / withdraw requests ─────
+
+
+def new_code(prefix: str) -> str:
+    return f"{prefix}-{secrets.randbelow(900000) + 100000}"
+
+
+async def create_request(kind, discord_id, amount, ign, channel_id, prefix) -> str:
+    """Inserts an 'open' request and returns its unique code."""
+    for _ in range(5):
+        code = new_code(prefix)
+
+        def q(code=code):
+            _client.table("requests").insert(
+                {
+                    "code": code,
+                    "kind": kind,
+                    "discord_id": discord_id,
+                    "amount": amount,
+                    "mc_ign": ign,
+                    "channel_id": channel_id,
+                    "status": "open",
+                }
+            ).execute()
+
+        try:
+            await asyncio.to_thread(q)
+            return code
+        except Exception:
+            log.exception("create_request failed, retrying with a new code")
+    raise RuntimeError("could not create request")
+
+
+async def set_request_status(code: str, from_status: str, to_status: str, reason=None):
+    """Atomic conditional update. Returns the updated row, or None if it wasn't in from_status."""
+
+    def q():
+        r = (
+            _client.table("requests")
+            .update(
+                {
+                    "status": to_status,
+                    "reason": reason,
+                    "resolved_at": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+            .eq("code", code)
+            .eq("status", from_status)
+            .execute()
+        )
+        return r.data[0] if r.data else None
+
+    return await asyncio.to_thread(q)
+
+
+async def approve_deposit(code: str):
+    """Credits balance + wager. Returns {discord_id, amount, balance} or None if already handled."""
+    return await _rpc("approve_deposit", {"p_code": code})
+
+
+async def create_withdraw(discord_id: int, amount: int, ign: str, channel_id: int):
+    """Returns (code, result). result >= 0 is the new balance; -1 not joined, -2 wager left, -3 no funds."""
+    for _ in range(3):
+        code = new_code("WD")
+        try:
+            result = await _rpc(
+                "create_withdraw",
+                {
+                    "p_code": code,
+                    "p_id": discord_id,
+                    "p_amount": amount,
+                    "p_ign": ign,
+                    "p_channel": channel_id,
+                },
+            )
+            return code, result
+        except Exception:
+            log.exception("create_withdraw failed, retrying")
+    raise RuntimeError("could not create withdrawal")
+
+
+async def reject_withdraw(code: str, reason: str):
+    """Refunds the player. Returns {discord_id, amount, balance} or None if already handled."""
+    return await _rpc("reject_withdraw", {"p_code": code, "p_reason": reason})
