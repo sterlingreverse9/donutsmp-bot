@@ -27,3 +27,9 @@ def error(title, description, user=None):
 
 def info(title, description, user=None):
     return make(title, description, config.COLOR_DARK, user)
+
+
+def sim(embed):
+    """Tags an embed as part of the simulation."""
+    embed.set_footer(text=config.SIM_FOOTER)
+    return embed
