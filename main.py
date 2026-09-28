@@ -6,9 +6,12 @@ from discord.ext import commands
 import checks
 import config
 import db
+from utils import embeds
 from webserver import start_web
 
 logging.basicConfig(level=logging.INFO)
+
+EXTENSIONS = ("cogs.economy", "cogs.admin", "cogs.coinflip")
 
 
 class DonutBetBot(commands.Bot):
@@ -22,12 +25,14 @@ class DonutBetBot(commands.Bot):
             help_command=None,
         )
         self.bot_enabled = True
+        self.cf_win_chance = config.DEFAULT_CF_WIN
         self.add_check(self.global_check)
 
     async def setup_hook(self):
         await start_web()
         self.bot_enabled = await db.is_running()
-        for ext in ("cogs.economy", "cogs.admin"):
+        self.cf_win_chance = await db.get_cf_chance()
+        for ext in EXTENSIONS:
             await self.load_extension(ext)
         await self.tree.sync()
 
@@ -47,15 +52,24 @@ class DonutBetBot(commands.Bot):
             return
         if isinstance(error, checks.BotStopped):
             await ctx.send(
-                "⛔ The casino is currently stopped. "
-                "Ask the administrator to start it again."
+                embed=embeds.info(
+                    "⛔ Casino Closed",
+                    "The casino is currently stopped.\nAsk the administrator to start it again.",
+                ),
+                ephemeral=True,
             )
             return
         if isinstance(error, checks.NotAdmin):
-            await ctx.send("🚫 This command is for the administrator only.")
+            await ctx.send(
+                embed=embeds.error("Admins only", "This command is for the administrator."),
+                ephemeral=True,
+            )
             return
         logging.exception("Command error", exc_info=error)
-        await ctx.send("⚠️ Something went wrong. Try again in a moment.")
+        await ctx.send(
+            embed=embeds.error("Something went wrong", "Please try again in a moment."),
+            ephemeral=True,
+        )
 
 
 if __name__ == "__main__":
