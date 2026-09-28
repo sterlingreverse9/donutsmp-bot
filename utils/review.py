@@ -24,7 +24,7 @@ def who(user) -> str:
 def deposit_admin_embed(user, ign, amount, code):
     e = embeds.gold(
         "📥 Deposit Request",
-        "Simulated deposit. Accept to credit their balance.",
+        "Simulated deposit. Accept to credit their fake balance.",
     )
     e.add_field(name="👤 Player", value=who(user), inline=False)
     e.add_field(name="🎮 IGN", value=f"`{ign}`", inline=True)
@@ -36,7 +36,7 @@ def deposit_admin_embed(user, ign, amount, code):
 def withdraw_admin_embed(user, ign, amount, code, balance_after):
     e = embeds.gold(
         "📤 Withdrawal Request",
-        "Withdrawal approved!Paid in game.",
+        "Simulated withdrawal. Nothing is actually paid in game.",
     )
     e.add_field(name="👤 Player", value=who(user), inline=False)
     e.add_field(name="🎮 IGN", value=f"`{ign}`", inline=True)
@@ -92,7 +92,7 @@ async def announce_withdrawal(bot, req):
         )
         e.add_field(
             name="⚠️ Simulation",
-            value="Paid in game.",
+            value="Fake balance. Nothing was paid in game.",
             inline=False,
         )
         await channel.send(embed=embeds.sim(e))
@@ -158,7 +158,7 @@ async def do_paid(interaction, code):
     e.add_field(name="🎮 IGN", value=f"`{req['mc_ign']}`", inline=True)
     e.add_field(
         name="⚠️ Simulation",
-        value="Amound sent in game.",
+        value="Nothing was actually sent in game. Balances here are fake.",
         inline=False,
     )
     if not await dm_user(interaction.client, req["discord_id"], embeds.sim(e)):
