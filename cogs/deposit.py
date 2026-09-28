@@ -27,9 +27,9 @@ def deposit_embed(user, ign, amount, code):
     e.add_field(
         name="📋 Instructions",
         value=(
-            "**1.** Pay the exact Deposit amount to .fbfnch using ( /pay .fbfnch <amt> in game)"
+            "**1.** *A real casino would tell you to pay in game here. **Don't.** "
             "Nothing is paid.*\n"
-            "**2.** TAKE SCREENSHOT OF PAYMENT.\n"
+            "**2.** Take any screenshot. Any photo works.\n"
             "**3.** Come back here and press **✅ I Paid**.\n"
             "**4.** Send the screenshot in this chat."
         ),
@@ -83,7 +83,7 @@ class DepositView(discord.ui.View):
         self.remove_item(button)  # only "Cancel Deposit" stays
         waiting = embeds.gold(
             "📸 Send your screenshot",
-            "Send payment screenshot in this chat now.\nChanged your mind? Press **Cancel Deposit**.",
+            "Send **any photo** in this chat now.\nChanged your mind? Press **Cancel Deposit**.",
             self.user,
         )
         waiting.add_field(name="🆔 Deposit ID", value=f"`{self.code}`", inline=True)
